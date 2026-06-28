@@ -39,15 +39,18 @@ Three base resources at launch:
 - Found on **asteroid nodes** within a system.
 - To mine, a player **places a ship on the node**; extraction accrues over time into
   the ship's cargo at the ship's mining rate, capped by cargo capacity.
-- The ship must then **return to a base** to deposit before mining more once full.
+- The ship must then **return to the home base** to deposit before mining more once
+  full. *(MVP: deposit at the **home base only**; depositing at any owned/forward base
+  is a planned post-MVP extension.)*
 
 ### 2.2 Gas (and Lagrange nodes)
 - Gas is harvested **only near gas giants**, at fixed **Lagrange nodes** — stable
   orbital points where a ship can "park" and mine.
-- Each gas giant exposes a **limited number of Lagrange node slots**. Slots are
+- Each gas giant exposes exactly **5 Lagrange node slots** (orbit nodes). Slots are
   **finite and contestable**, which makes gas the naturally **scarce, PvP-flavored**
-  resource: prime gas spots are worth fighting over, and holding them is a strategic
-  objective. (Contrast with ore/crystal, which are more plentiful and spread out.)
+  resource: with only 5 parking spots per gas giant, prime gas spots are worth
+  fighting over, and holding them is a strategic objective. (Contrast with ore/crystal,
+  which are more plentiful and spread out.)
 - Parking a ship at a Lagrange slot mines gas over time, same accrue-to-cargo model.
 
 > **Design intent:** ore/crystal = steady economic backbone (low conflict); gas =
@@ -58,6 +61,21 @@ Three base resources at launch:
 - Mining is **time-based and continues while the player is offline** — the
   server-side simulation accrues output deterministically and caps it at the ship's
   cargo. (See `TECH_DESIGN.md` §6.2 "continuous world" + scheduled jobs.)
+
+### 2.4 Economic identity (resource sinks)
+
+Each resource has a **distinct role** so all three stay in demand and specialization
+matters (rather than one blended cost for everything):
+
+| Resource | Primarily builds / fuels |
+| --- | --- |
+| **Ore** | Hulls & structures — the bulk material for ships and base construction. |
+| **Crystal** | Shields, electronics & modules — the "tech" input for ship systems and upgrades. |
+| **Gas** | Fuel & advanced/energy systems — powers travel and high-end/energy-hungry tech. |
+
+*Baseline identities; exact recipe costs are tuned in Phase 1. Because gas is the
+scarce, contested resource, gating fuel/advanced tech on it reinforces why gas giants
+are worth fighting over.*
 
 ---
 
@@ -118,10 +136,11 @@ precisely** and lets players **review exactly how a battle was decided**.
 
 ### 4.1 Resolution rules
 - Combat runs in **rounds**, up to a **maximum of 100 rounds**.
-- It ends early **the moment a ship is destroyed** (for 1v1) / one side is wiped (for
-  fleets). *(Open: see §4.4 for the multi-ship end condition.)*
-- If neither side is destroyed by round 100, the battle ends as a **stalemate /
-  disengage** — combatants survive with accrued damage and break off. *(Tunable.)*
+- It ends early **the moment one side is wiped** (1v1: a ship destroyed; fleet:
+  all ships on a side destroyed).
+- **Stalemate at round 100:** if neither side is wiped by round 100, **both sides
+  exit combat with their accrued damage** (hull/shield carry over) and disengage.
+  No winner is declared; the ships survive and break off.
 
 ### 4.2 What happens in a round (working model)
 Each round, deterministically:
@@ -133,27 +152,37 @@ Each round, deterministically:
    destroyed and removed.
 4. **End of round** — surviving ships recover `shieldRegen` shield HP (up to max).
 
-> **Determinism:** the resolver is a **pure function** of the combatants' stats (no
-> hidden RNG, or a *recorded seed* if we want controlled variance). This is the key
-> property — see `TECH_DESIGN.md` §6.4 for how this enables instant server-side
-> resolution + exact replay.
+> **Determinism & seed:** every battle is stamped with a **combat seed ID** — a large
+> unique identifier (a **GUID**) recorded with the battle. The resolver is a function
+> of `(combatants, rulesetVersion, seedId)`, so any battle is **exactly reproducible**
+> from those inputs. The seed drives any controlled variance (and tie-breaks), while
+> staying fully replayable and analyzable — see `TECH_DESIGN.md` §6.4.
 
-### 4.3 Watching / reviewing a battle
+### 4.3 Fleet combat rules
+- **Target selection — focus-fire weakest:** each side concentrates fire on the enemy
+  ship with the **lowest effective HP** (shield + hull) first, removing enemy ships —
+  and their damage output — as fast as possible. Deterministic given the seed; ties
+  broken by the seed.
+- **End condition:** a side loses when **all its ships are destroyed**; otherwise the
+  round-100 stalemate (§4.1) applies and both fleets disengage with damage.
+- **Retreat (MVP):** no early/voluntary retreat — fights run to a wipe or the
+  round-100 stalemate. *(Planned fast-follow: a **player-set retreat threshold**, e.g.
+  "disengage at <30% fleet strength," letting a fleet bug out early with damage.)*
+
+### 4.5 Watching / reviewing a battle
 - The server resolves combat instantly and produces a **round-by-round event log**
   (who fired, hits, damage, shield/hull after each step, destructions).
 - Players can **watch the battle play back** in the system view — the client animates
   the log so the player sees *how the outcome was decided*, round by round.
-- Because it's deterministic, replays are exact and auditable; we can also re-derive a
-  battle from its inputs + ruleset version (useful for balance analysis and dispute
-  resolution).
+- Because it's deterministic, replays are exact and auditable; a battle can be
+  re-derived from its inputs (`combatants + rulesetVersion + seedId`) — useful for
+  balance analysis and dispute resolution.
 
-### 4.4 Open combat questions
-- **Fleet vs fleet** target selection & end condition (last-ship-standing? morale/
-  retreat threshold? focus-fire rules?).
-- Whether to keep combat **pure-deterministic** (easiest to balance/analyze) or use a
-  **recorded seed** for some variance while staying replayable.
-- Stalemate handling at round 100 (disengage vs. damage-based victor).
-- How `agility`/`countermeasures` numerically convert to mitigation (formula tuning).
+### 4.6 Open combat questions (tuning only)
+- Exact numeric formulas: how `agility` and `countermeasures` convert to mitigation,
+  and the missile damage curve.
+- Round-100 stalemate frequency — tune stats/round cap so true stalemates are rare.
+- Whether the player-set retreat threshold (§4.3) lands in MVP or the fast-follow.
 
 ---
 
@@ -198,13 +227,23 @@ Two scales of travel, both modeled as timed jobs (see `TECH_DESIGN.md` §6.2):
 
 ---
 
-## 8. Open design questions (for the team)
+## 8. Decisions locked & questions remaining
 
-1. Combat: pure-deterministic vs recorded-seed variance? (§4.4)
-2. Fleet combat target-selection & end conditions? (§4.4)
-3. Do miners deposit to *any* friendly base or only the **home base**?
-4. Lagrange slot count per gas giant, and whether slots are claimable/holdable.
-5. Resource sinks — what do crystal/ore/gas each primarily build or fuel?
+**Decided (this pass):**
+- Combat uses a **per-battle GUID seed ID** for reproducible variance/tie-breaks (§4.2).
+- Fleet combat: **focus-fire the weakest**; a side loses when **all its ships die**;
+  round-100 **stalemate = both disengage with damage** (§4.1, §4.3).
+- Miners deposit at the **home base only** for MVP (§2.1).
+- **5 Lagrange slots per gas giant** (§2.2).
+- Resource identities: **ore→hulls/structures, crystal→shields/electronics/modules,
+  gas→fuel & advanced/energy** (§2.4).
+
+**Still open:**
+1. Player-set **retreat threshold** — MVP or fast-follow? (§4.3, §4.6)
+2. Are Lagrange slots **claimable/holdable** (persistent ownership) or pure
+   first-come occupancy?
+3. Combat **numeric formulas** for agility/countermeasures mitigation (§4.6).
+4. Post-MVP: depositing at **forward/owned bases** beyond the home base (§2.1).
 
 ---
 

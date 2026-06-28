@@ -268,10 +268,12 @@ GPUs. We handle this with:
 Combat is **fully deterministic from ship stats** (design in [`GAME_DESIGN.md`](GAME_DESIGN.md) §4).
 That property is an architectural gift:
 
-- **Pure-function resolver:** `resolveCombat(sideA, sideB, rulesetVersion[, seed]) →
+- **Pure-function resolver:** `resolveCombat(sideA, sideB, rulesetVersion, seedId) →
   { outcome, log }`. No hidden state; given the same inputs it always returns the same
-  result. Default to **no RNG** (purely stat-driven) for maximum analyzability; a
-  *recorded* seed is the only allowed source of variance, so results stay reproducible.
+  result. Every battle is stamped with a **GUID `seedId`** (a large unique id) that is
+  recorded with the battle and seeds any variance/tie-breaks — so results stay fully
+  reproducible and analyzable. Fleet targeting is **focus-fire weakest** (lowest
+  effective HP first), ties broken by the seed (see [`GAME_DESIGN.md`](GAME_DESIGN.md) §4.3).
 - **Instant server-side resolution:** the server computes the entire battle in one
   shot (max **100 rounds**, early-out on a destruction) rather than simulating it over
   real time. Cheap, cheat-proof, and easy to reason about.
@@ -279,10 +281,10 @@ That property is an architectural gift:
   **round-by-round event log** (orderings, hits, damage, shield/hull after each step,
   destructions). The client *animates the log* in the system view so players can watch
   *how* the outcome was decided — the client never needs the combat math.
-- **Storage & audit:** persist the **inputs + ruleset version** (small, lets us
-  re-derive any battle for balance analysis or dispute resolution) plus the resolved
-  log for fast playback. Old replays stay faithful because each battle records the
-  `rulesetVersion` it was resolved under (balance changes are versioned — §9.3).
+- **Storage & audit:** persist the **inputs + `rulesetVersion` + `seedId`** (small,
+  lets us re-derive any battle for balance analysis or dispute resolution) plus the
+  resolved log for fast playback. Old replays stay faithful because each battle records
+  the `rulesetVersion` it was resolved under (balance changes are versioned — §9.3).
 - **Balance tooling:** because it's a pure function, we can batch-simulate matchups
   offline (parameter sweeps over `agility`/`range`/`missiles`/`countermeasures`/
   `shieldRegen`) to find dominant builds before shipping content.
