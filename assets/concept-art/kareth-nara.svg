@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 260" width="240" height="260">
+  <defs>
+    <linearGradient id="hullK" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0e3322"/>
+      <stop offset="0.55" stop-color="#1f5a3a"/>
+      <stop offset="1" stop-color="#0e3322"/>
+    </linearGradient>
+    <radialGradient id="glowK" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7dffc4" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#7dffc4" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#7dffc4" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softK" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="120" cy="238" r="23" fill="url(#glowK)"/><circle cx="120" cy="238" r="11" fill="#7dffc4" filter="url(#softK)"/>
+    <!-- swept manta wings (symmetric) -->
+    <path d="M120 60 C70 70 26 120 30 200 C70 176 96 150 120 150 Z"
+          fill="url(#hullK)" stroke="#39b58a" stroke-width="2"/>
+    <path d="M120 60 C170 70 214 120 210 200 C170 176 144 150 120 150 Z"
+          fill="url(#hullK)" stroke="#39b58a" stroke-width="2"/>
+    <!-- central body -->
+    <path d="M120 28 C104 64 102 150 120 196 C138 150 136 64 120 28 Z"
+          fill="url(#hullK)" stroke="#39b58a" stroke-width="2"/>
+    <!-- bioluminescent veins -->
+    <g stroke="#7dffc4" stroke-width="2" fill="none" filter="url(#softK)" opacity="0.95">
+      <path d="M120 50 C112 90 112 150 120 188"/>
+      <path d="M118 90 C90 110 70 150 56 184"/>
+      <path d="M122 90 C150 110 170 150 184 184"/>
+    </g>
+    <!-- crystal shards -->
+    <g fill="#7dffc4" opacity="0.9">
+      <path d="M120 40 l7 14 l-7 12 l-7 -12 Z"/>
+      <path d="M86 150 l5 9 l-5 8 l-5 -8 Z"/>
+      <path d="M154 150 l5 9 l-5 8 l-5 -8 Z"/>
+    </g>
+    
+  </g>
+</svg>

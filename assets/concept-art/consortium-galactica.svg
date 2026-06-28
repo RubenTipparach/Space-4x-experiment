@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 260" width="240" height="260">
+  <defs>
+    <linearGradient id="hullC" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b9c4d0"/>
+      <stop offset="0.55" stop-color="#e8edf2"/>
+      <stop offset="1" stop-color="#b9c4d0"/>
+    </linearGradient>
+    <radialGradient id="glowC" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#5ec8ff" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#5ec8ff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#5ec8ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softC" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <!-- nacelles -->
+    <g fill="url(#hullC)" stroke="#d9a93a" stroke-width="1.5">
+      <rect x="40" y="150" width="22" height="86" rx="11"/>
+      <rect x="178" y="150" width="22" height="86" rx="11"/>
+    </g>
+    <circle cx="51" cy="236" r="17" fill="url(#glowC)"/><circle cx="51" cy="236" r="8" fill="#5ec8ff" filter="url(#softC)"/><circle cx="189" cy="236" r="17" fill="url(#glowC)"/><circle cx="189" cy="236" r="8" fill="#5ec8ff" filter="url(#softC)"/>
+    <rect x="44" y="150" width="14" height="10" rx="5" fill="#5ec8ff"/>
+    <rect x="182" y="150" width="14" height="10" rx="5" fill="#5ec8ff"/>
+    <!-- pylons -->
+    <path d="M95 178 L51 168 M145 178 L189 168" stroke="#b9c4d0" stroke-width="9"/>
+    <!-- engineering hull -->
+    <rect x="100" y="140" width="40" height="92" rx="18" fill="url(#hullC)" stroke="#d9a93a" stroke-width="1.5"/>
+    <!-- saucer -->
+    <ellipse cx="120" cy="92" rx="74" ry="58" fill="url(#hullC)" stroke="#d9a93a" stroke-width="2"/>
+    <ellipse cx="120" cy="92" rx="46" ry="34" fill="none" stroke="#d9a93a" stroke-width="1.5" opacity="0.8"/>
+    <circle cx="120" cy="150" r="8" fill="#5ec8ff"/>  <!-- deflector dish -->
+    <circle cx="120" cy="92" r="9" fill="#d9a93a"/>   <!-- bridge -->
+    
+  </g>
+</svg>

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 260" width="240" height="260">
+  <defs>
+    <linearGradient id="hullS" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0f16"/>
+      <stop offset="0.55" stop-color="#16202e"/>
+      <stop offset="1" stop-color="#0a0f16"/>
+    </linearGradient>
+    <radialGradient id="glowS" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#37e6ff" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#37e6ff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#37e6ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softS" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="120" cy="236" r="19" fill="url(#glowS)"/><circle cx="120" cy="236" r="9" fill="#37e6ff" filter="url(#softS)"/>
+    <!-- swept tail fins -->
+    <path d="M120 150 L70 224 L106 196 L120 196 Z" fill="url(#hullS)" stroke="#3aa0b5" stroke-width="1.5"/>
+    <path d="M120 150 L170 224 L134 196 L120 196 Z" fill="url(#hullS)" stroke="#3aa0b5" stroke-width="1.5"/>
+    <!-- long knife fuselage -->
+    <path d="M120 20 L138 120 L128 222 L112 222 L102 120 Z" fill="url(#hullS)" stroke="#3aa0b5" stroke-width="2"/>
+    <!-- cold cyan edge lines -->
+    <g stroke="#37e6ff" stroke-width="1.6" filter="url(#softS)" opacity="0.95" fill="none">
+      <path d="M120 28 L134 120 L126 210"/>
+      <path d="M120 28 L106 120 L114 210"/>
+    </g>
+    <path d="M120 60 L120 150" stroke="#3aa0b5" stroke-width="1.2" opacity="0.7"/>
+    <circle cx="120" cy="92" r="5" fill="#37e6ff"/>
+    
+  </g>
+</svg>

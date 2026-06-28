@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 260" width="240" height="260">
+  <defs>
+    <linearGradient id="hullP" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b3f17"/>
+      <stop offset="0.55" stop-color="#6f7a2e"/>
+      <stop offset="1" stop-color="#3b3f17"/>
+    </linearGradient>
+    <radialGradient id="glowP" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#c6ff3a" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#c6ff3a" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#c6ff3a" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softP" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="120" cy="236" r="25" fill="url(#glowP)"/><circle cx="120" cy="236" r="12" fill="#c6ff3a" filter="url(#softP)"/>
+    <!-- trailing tendrils -->
+    <g stroke="#9fae3e" stroke-width="4" fill="none" opacity="0.9">
+      <path d="M104 208 C92 224 96 240 84 252"/>
+      <path d="M136 208 C150 222 146 240 158 252"/>
+      <path d="M120 212 C120 230 116 244 122 256"/>
+    </g>
+    <!-- bulbous asymmetric infected body -->
+    <path d="M120 26 C92 40 78 90 88 140 C70 150 66 188 104 210
+             C132 220 150 200 150 200 C176 180 168 150 152 140
+             C166 92 150 44 120 26 Z"
+          fill="url(#hullP)" stroke="#9fae3e" stroke-width="2"/>
+    <!-- pustules / toxic cores -->
+    <g>
+      <circle cx="110" cy="96" r="13" fill="url(#glowP)"/>
+      <circle cx="110" cy="96" r="6" fill="#c6ff3a"/>
+      <circle cx="138" cy="150" r="16" fill="url(#glowP)"/>
+      <circle cx="138" cy="150" r="7" fill="#c6ff3a"/>
+      <circle cx="98" cy="160" r="9" fill="url(#glowP)"/>
+      <circle cx="98" cy="160" r="4" fill="#c6ff3a"/>
+    </g>
+    <!-- veiny growth lines -->
+    <g stroke="#9fae3e" stroke-width="1.5" fill="none" opacity="0.8">
+      <path d="M120 40 C108 80 108 140 116 196"/>
+      <path d="M120 60 C140 90 138 150 132 190"/>
+    </g>
+    
+  </g>
+</svg>

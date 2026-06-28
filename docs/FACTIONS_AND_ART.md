@@ -7,10 +7,12 @@
 
 **Status:** Draft v1 · **Last updated:** 2026-06-28
 
-> **Awaiting input:** the canonical faction list comes from the team. This doc
-> defines the **template and pipeline**; §5 is a single *illustrative* example to be
-> replaced/extended once real factions land. See §8 for exactly what I need per
-> faction.
+> **Source:** factions, setting, and lore are drawn from
+> [`source/Fallen_Tribes__Council_Archives.pdf`](source/Fallen_Tribes__Council_Archives.pdf)
+> (the Thallian Nebula "Council Archives"). §5 fills the design-language template for
+> all 8 factions; first-pass **SVG concept ships** live in
+> [`../assets/concept-art/`](../assets/concept-art/) (see the rendered
+> `concept-sheet.png`).
 
 ---
 
@@ -27,6 +29,18 @@
   new factions = a new palette + part variants + grammar.
 
 ---
+
+## 1b. Setting: The Thallian Nebula
+
+A dense, chaotic nebula on the outer edge of a spiral arm, anchored by a central
+**massive black hole** and littered with ancient megastructures (the Ancient Ring,
+the Maelstrom, the Ghost Fleet). Crucially for gameplay: **stellar distances are very
+short** — systems are packed close, so interstellar travel is quick — but the dense
+clouds and gravitational anomalies make navigation treacherous. Each faction holds a
+home system orbiting the black hole, connected by **Jump Points**. This maps directly
+to our design: a tightly-packed cluster of detailed systems with a galaxy view over
+the nebula, and "minutes between stars" travel (`GAME_DESIGN.md` §5) fits the short
+distances well.
 
 ## 2. Faction System (gameplay)
 
@@ -56,8 +70,17 @@ you raise your standing with that faction by either:
 - Each faction has **allies and enemies**. Helping one can *lower* standing with its
   rivals — choices have opportunity cost.
 - This relationship graph also feeds acquisition: attacking Faction A's enemies raises
-  A's reputation (§2.2). The concrete graph is defined once the faction list is set
-  (§8).
+  A's reputation (§2.2).
+- **Working graph (derived from the lore; tune later):**
+  - **Kareth Nara ⚔ Terra Nexum** — natives vs. encroaching refugee settlers.
+  - **Consortium Galactica ⚔ Astryn'Vel** — the order-keeping Council vs. the rebels
+    who want it gone.
+  - **Illumaria ⚔ Shadur'kai** — shadow manipulators vs. the covert operatives who
+    exist to check them.
+  - **Ezrathi & Kri'thul** — apocalyptic/void factions, hostile to most "living"
+    factions; the Consortium opposes both as threats to order.
+  - **Consortium = balancer** — props up the near-extinct (Terra Nexum), restrains the
+    too-powerful; broadly neutral-to-wary toward everyone.
 
 ### 2.4 Open questions
 - Can players **realign / switch** primary faction later, and at what cost (rep reset,
@@ -141,31 +164,105 @@ described as a kit recipe so art and stats stay aligned.
 
 ---
 
-## 5. Worked Example *(illustrative — to be replaced)*
+## 5. Faction Roster & Design Languages
 
-> A placeholder faction to demonstrate the template's format. **Not canon** — swap for
-> real factions in §8.
+All 8 Thallian Nebula factions, each with its filled template and the signature
+concept ship in [`../assets/concept-art/`](../assets/concept-art/). Palettes list the
+concept-pass hex (production swaps to tokens). Concept ships are the **first pass for
+approval** — silhouette + palette established; full per-role fleets follow once
+approved.
 
-### Faction: "Concord Explorers" *(example)*
-- **Fiction/feel:** idealist explorer-diplomats; ships read as calm, capable, clean.
-- **Hull archetype:** saucer primary hull + slim engineering section.
-- **Symmetry:** strict bilateral. **Line language:** smooth, clean curves.
-- **Palette:** `--hull #d9e2ec` (pale grey-white), `--trim #5b7fa6` (steel blue).
-- **Accent/glow:** `--glow #6fd3ff` (cyan drives), `--accent #f2b134` (running lights).
-- **Nacelles:** two long nacelles on raised pylons, soft cyan glow.
-- **Plating:** smooth with subtle panel lines. **Greeble:** minimal.
-- **Material:** matte ceramic-white. **Naming:** *Pathfinder / Meridian / Aegis*.
-- **Representative ships:**
-  - `concord-prospector` (**miner**) — saucer + cargo blisters, single nacelle, no
-    weapons; high cargo/mining, fragile.
-  - `concord-escort` (**combat**) — trimmed saucer, twin nacelles, forward missile
-    rack; balanced agility/range.
-  - `concord-pathfinder` (**combat/hero**) — full saucer + engineering hull, twin
-    nacelles, deflector dish; flagship silhouette.
+### 5.1 Consortium Galactica — *Galactic Council · Universal Order*
+- **Feel:** gleaming, authoritative peacekeepers; the most "classic sci-fi" look.
+- **Silhouette:** saucer primary hull + engineering hull + two nacelles on pylons.
+  **Symmetry:** strict bilateral. **Line:** smooth, clean.
+- **Palette:** hull `#e8edf2` pearl-white, trim `#d9a93a` gold; **glow** `#5ec8ff` blue.
+- **Drives:** twin nacelles, soft blue. **Plating:** smooth, subtle panels. **Greeble:** minimal.
+- **Material:** matte ceramic-white. **Naming:** *Meridian / Aegis / Arbiter*.
+- **Concept:** `consortium-galactica.svg`.
 
-*(A contrasting example — an aggressive, asymmetric, green-hued raider faction with
-swept-wing hulls and heavy greebling — would slot in the same format to prove the
-language separates cleanly. Left out until real factions arrive.)*
+### 5.2 Kareth Nara — *Karisen Natives · Natural Sovereignty*
+- **Feel:** spiritual nature-keepers; grown, not built; bioluminescent.
+- **Silhouette:** organic manta/leaf with swept curved wings. **Symmetry:** bilateral.
+  **Line:** flowing curves.
+- **Palette:** hull `#1f5a3a` forest-green, trim `#39b58a` jade; **glow** `#7dffc4`
+  bioluminescent cyan-green.
+- **Drives:** organic vents, soft green. **Plating:** smooth with glowing veins.
+  **Greeble:** crystal-shard accents. **Material:** living ceramic/chitin.
+  **Naming:** *Seedsong / Verdant / Spirewing*.
+- **Concept:** `kareth-nara.svg`.
+
+### 5.3 Terra Nexum — *Terran · Human Ascendancy*
+- **Feel:** near-extinct refugees; gritty Old-West salvage; cobbled-together.
+- **Silhouette:** blocky industrial gunship, chamfered nose, **deliberately
+  asymmetric** salvage pods/struts. **Line:** hard, angular.
+- **Palette:** hull `#9c5a2c` rust, trim `#caa45a` weathered tan; **glow** `#ff8a3c`
+  orange exhaust.
+- **Drives:** twin chunky engine blocks. **Plating:** riveted, patchwork, weathered.
+  **Greeble:** heavy (antennae, struts, gun barrels). **Material:** scarred steel.
+  **Naming:** *Prospector / Ironside / Coyote*.
+- **Concept:** `terra-nexum.svg`.
+
+### 5.4 Illumaria — *Benefactor · Guided Enlightenment*
+- **Feel:** shadowy manipulators; sleek, predatory elegance; deceptive.
+- **Silhouette:** sharp stealth arrowhead with swept wings. **Symmetry:** bilateral.
+  **Line:** sharp, swept.
+- **Palette:** hull `#2a2440` dark indigo, trim `#7a5cff` violet; **glow** `#d24bff`
+  magenta spine.
+- **Drives:** single concealed drive, magenta. **Plating:** smooth dark composite.
+  **Greeble:** minimal. **Material:** light-drinking matte. **Naming:** *Whisper /
+  Cipher / Velvet*.
+- **Concept:** `illumaria.svg`.
+
+### 5.5 Astryn'Vel — *Rebels · Freedom Through Defiance*
+- **Feel:** scrappy guerrilla freedom-fighters; fast, mismatched, defiant.
+- **Silhouette:** strike fighter with swept wings, **slightly asymmetric**; patch
+  panels. **Line:** aggressive, improvised.
+- **Palette:** hull `#5c6645` olive-drab, trim `#d7822e` rebel-orange; **glow**
+  `#9be84a` green.
+- **Drives:** twin small engines. **Plating:** mismatched panels, painted stripe.
+  **Greeble:** moderate (wingtip cannons, patches). **Material:** scavenged composite.
+  **Naming:** *Freehold / Defiant / Emberkin*.
+- **Concept:** `astryn-vel.svg`.
+
+### 5.6 Ezrathi — *Cultists · Void Reverence*
+- **Feel:** void-worshipping cult; monolithic, ritualistic, ominous.
+- **Silhouette:** angular obsidian hull with sharp asymmetric blades + floating
+  monolith shards; glowing rune-core. **Symmetry:** ritual-asymmetric. **Line:** sharp.
+- **Palette:** hull `#1a1622` obsidian, trim `#6b3fa0` violet; **glow** `#8cff6b`
+  void-green (with violet drive).
+- **Drives:** arcane core, violet. **Plating:** smooth black stone. **Greeble:** ritual
+  sigils, monolith fragments. **Material:** dark monolith. **Naming:** *Threnody /
+  Sablerite / Hollow Choir*.
+- **Concept:** `ezrathi.svg`.
+
+### 5.7 Kri'thul — *Plague · Inevitable Corruption*
+- **Feel:** apocalyptic blight; grown-diseased biomechanical horror.
+- **Silhouette:** bulbous **asymmetric** infected pod with trailing tendrils. **Line:**
+  organic, irregular.
+- **Palette:** hull `#6f7a2e` sickly green, trim `#9fae3e` necrotic; **glow** `#c6ff3a`
+  toxic-green pustules.
+- **Drives:** organic spore-vents. **Plating:** infected, lumpen, veined. **Greeble:**
+  heavy (pustules, tendrils, growths). **Material:** diseased chitin. **Naming:**
+  *Rotmaw / Blightspawn / Wail*.
+- **Concept:** `krithul.svg`.
+
+### 5.8 Shadur'kai — *Rogue · Shadowed Autonomy*
+- **Feel:** covert-justice operatives; clean knife-edge stealth (the "righteous"
+  mirror of Illumaria).
+- **Silhouette:** long knife/dagger fuselage with swept tail fins. **Symmetry:**
+  bilateral. **Line:** clean, sharp.
+- **Palette:** hull `#16202e` blue-black, trim `#3aa0b5` steel-cyan; **glow** `#37e6ff`
+  cold cyan edges.
+- **Drives:** single low-signature drive, cyan. **Plating:** smooth dark with glowing
+  edge-lines. **Greeble:** minimal. **Material:** stealth composite. **Naming:**
+  *Veil / Edict / Nightglass*.
+- **Concept:** `shadur-kai.svg`.
+
+> **Per-faction fleets (next step, once silhouettes are approved):** each faction gets
+> 3–5 ships mapped to roles (`miner`, `combat`, hero) built from the shared kit under
+> its palette — e.g. a Consortium `meridian-prospector` (miner) and `aegis-escort`
+> (combat), a Terra Nexum `prospector-rig` and `ironside-gunship`, etc.
 
 ---
 
@@ -196,17 +293,19 @@ language separates cleanly. Left out until real factions arrive.)*
 
 ---
 
-## 8. What I need from you per faction
+## 8. Approval & next steps
 
-To fill the §4 template (and §5-style writeup) for each real faction, give me as much
-of this as you have — I'll infer the rest and flag assumptions:
+The §5 roster + the concept sheet (`assets/concept-art/concept-sheet.png`) are a
+**first pass for your approval.** Feedback I'd find useful per faction:
 
-1. **Name & one-line fiction** (who they are, their vibe).
-2. **Silhouette idea** (saucer? wing? blocky? organic?) and **symmetry**.
-3. **Colors** (even rough — "cold steel blue," "menacing green").
-4. **Drive/nacelle feel** (how many, what glow).
-5. **Allies & enemies** (even just "rivals with X").
-6. **A few ship-class names** if you have them (else I'll propose per the naming axis).
+1. **Silhouette** — does each shape read as the faction's identity? Any that should be
+   re-thought (e.g. want Consortium more/less "classic," Kri'thul more grotesque)?
+2. **Palette** — colors right, or shift any (e.g. Ezrathi greener vs. more violet)?
+3. **Relationship graph** (§2.3) — did I read the rivalries correctly?
+
+Once silhouettes are approved, the next deliverable is **per-faction fleets** (3–5
+ships each mapped to roles), built from the shared kit so each faction stays
+on-language, plus original **faction insignia**.
 
 Hand me the faction list and I'll produce a filled design-language entry + kit recipe
 for each, ready for SVG authoring.
