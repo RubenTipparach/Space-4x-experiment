@@ -53,6 +53,10 @@ SVG spacecraft), and extend it to MMO scale.
   2. *Galaxy view* — thousands of stars in a small slice of the galaxy, with the
      ability to expand the galaxy later.
 - **Top-down 2D** presentation throughout.
+- **One shared universe ("single server").** All players inhabit the same galaxy —
+  no parallel realms or per-lobby world copies. Load is offloaded by *partitioning
+  the simulation work* across machines and by *distributing new players across
+  capped starting systems*, never by forking the world. (See §7.1–7.3.)
 - **Continuous, persistent simulation** — the world advances in real time.
 - **Frequent content drops** — new starships added regularly, ideally as pure
   data + art with no code deploys required.
@@ -289,16 +293,75 @@ stateful, WebSocket workloads with global routing. We use them in two tiers:
         └────────────────────────┘        └──────────────┘
 ```
 
-### 7.1 Sharding strategy
-- The galaxy is partitioned into **sectors**; each simulation worker owns a set of
-  sectors/systems. This is how we scale horizontally: add machines, assign sectors.
-- Cross-shard interactions (a fleet traveling from sector A to B) are handled by
-  **handoff messages** over Redis pub/sub or direct internal calls — bounded and
-  infrequent because most action is local to a system.
-- Start with **one worker, one region** (the game is latency-tolerant); split into
-  sectors only when load demands it.
+### 7.1 One universe, transparently partitioned
 
-### 7.2 Persistence — phased
+**Design rule: there is exactly one shared universe. All players are on "one
+server."** This is a core product decision — no parallel realms, no per-lobby
+copies of the world, no "which server are you on?" Every player inhabits the same
+galaxy, sees the same systems, and can interact with anyone else.
+
+"Sharding," here, never means splitting the *universe*. It means transparently
+splitting the *work* of simulating that one universe across machines:
+
+- The galaxy is partitioned into **sectors**; each simulation worker owns a set of
+  sectors/systems. There is still only **one canonical copy of every system** — a
+  sector is simply assigned to exactly one worker at a time. This is how we scale
+  horizontally: add machines, (re)assign sectors. **Players never perceive the
+  seams** — the gateway routes their connection to whichever worker owns the system
+  they're looking at.
+- Cross-worker interactions (a fleet traveling from sector A to B, a cross-system
+  message) are handled by **handoff messages** over Redis pub/sub or direct internal
+  calls — bounded and infrequent because most action is local to a system.
+- Start with **one worker, one region** (the game is latency-tolerant). Because it's
+  one universe regardless of worker count, we can split sectors out to new workers
+  *later* with no migration of the player's mental model — purely an ops change.
+
+### 7.2 Load offloading via starting-system capacity (the key population lever)
+
+A single shared universe has one classic failure mode: **everyone piles into the
+same place.** That's both a load hotspot (one worker melts) *and* a gameplay problem
+(no room left to colonize). We solve both with **spawn distribution and soft
+per-system caps** — the approach raised in design discussion, formalized here.
+
+- **Curated starting systems.** Maintain a pool of entry-point systems spread across
+  many sectors (and therefore across many workers). New players don't choose freely;
+  they're **assigned to a starting system that still has capacity**.
+- **Soft population cap per starting system.** Each start system has a target
+  capacity (e.g. *N* active colonizing players). When it fills, new arrivals route to
+  the next start system with room. The cap is a tuning knob, set from measured
+  per-worker cost, not guessed.
+- **Why this offloads the server:** start-system population is the single biggest
+  driver of "hot" simulation cost (active colonies, mining ticks, ships, live
+  viewers). Capping players-per-start-system therefore **directly bounds the load on
+  the hottest workers** and spreads new population evenly across sectors/machines —
+  all while keeping one universe.
+- **Freedom preserved.** Caps gate *spawning*, not *movement*. Players can still
+  travel, expand, and settle anywhere in the one universe; we only steer where they
+  *begin* so the early-game load (and land grab) stays balanced.
+- **Capacity reclamation.** Inactive/abandoned starts free capacity over time
+  (decay/abandonment rules), so popular start systems keep accepting newcomers as
+  veterans push outward into frontier sectors.
+
+> **Open knob (Phase 1):** the per-start-system cap *N* and the number of start
+> systems. We'll derive both from the Phase 0/1 load test (cost per active player per
+> worker), not pick them upfront.
+
+### 7.3 Handling hotspots that form anyway
+
+Even with balanced spawns, players cluster around desirable or contested systems.
+We plan for it:
+
+- **Sector rebalancing:** reassign a busy sector to a less-loaded worker (the
+  handoff machinery from §7.1 already supports moving sectors between workers).
+- **Sector splitting:** if a single sector gets too hot, subdivide it so its systems
+  spread across more workers.
+- **Soft caps on concurrent *viewers/combatants* per system**, with overflow handled
+  gracefully (queue, spectate, or instanced sub-encounters for large battles) so one
+  mega-fight can't stall the worker for everyone else in its sector.
+- **Always one universe:** every technique above is an internal load move; none of
+  them forks the world or splits the playerbase.
+
+### 7.4 Persistence — phased
 - **Phase 1 (MVP, mirrors reference repo):** SQLite, optionally **LiteFS** for
   replication/backup, on a Fly **Volume**. Simple, cheap, fast for a single worker.
 - **Phase 2 (scale):** **Fly Managed Postgres** for accounts + durable world state
@@ -311,7 +374,7 @@ stateful, WebSocket workloads with global routing. We use them in two tiers:
   stored once; this keeps "thousands of stars" tiny on disk (seed + deltas) and
   makes "expand the galaxy later" a matter of generating new seeded sectors.
 
-### 7.3 Deployment & CI/CD (follow the reference repo)
+### 7.5 Deployment & CI/CD (follow the reference repo)
 - **GitHub Actions** → deploy backend to Fly.io via `FLY_API_TOKEN`.
 - **Static client** can deploy to GitHub Pages (per the reference) or be served by a
   Fly static/edge app; client points at the API via a configurable base URL
@@ -483,8 +546,9 @@ binary protocol on hot paths; observability and anti-cheat hardening.
 **Open questions for the team:**
 1. Real-time *combat* — fully async (resolve on a tick) or short live encounters?
    This decides how tight the netcode must be.
-2. Target concurrency for Phase 1 (tens? hundreds? per system) — sets the SQLite→PG
-   timing.
+2. Per-start-system soft cap *N* and number of starting systems (§7.2) — derive from
+   the Phase 0/1 load test (cost per active player per worker); also sets the
+   SQLite→PG timing.
 3. Monetization/scope (affects content cadence and infra budget).
 4. How "expandable" must the galaxy be day one — fixed seed vs. dynamically grown
    sectors?
