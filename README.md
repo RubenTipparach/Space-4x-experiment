@@ -17,6 +17,9 @@ new starships added on a regular cadence.
 - 📄 **[docs/GAME_DESIGN.md](docs/GAME_DESIGN.md)** — gameplay: resources (ore /
   crystal / gas), mining, ship roles, deterministic reviewable combat, travel, and
   the home-base core loop.
+- 📄 **[docs/FACTIONS_AND_ART.md](docs/FACTIONS_AND_ART.md)** — faction system (pick a
+  start faction, earn ships via reputation) and the SVG per-faction design-language
+  template & art pipeline.
 
 ### Headline decisions
 

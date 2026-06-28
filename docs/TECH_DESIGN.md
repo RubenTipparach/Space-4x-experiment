@@ -462,16 +462,19 @@ Discord is both our **identity provider** and our **community surface**.
   [`GAME_DESIGN.md`](GAME_DESIGN.md) §3):
   ```jsonc
   {
-    "id": "miner-prospector-mk1",
+    "id": "concord-prospector",
+    "faction": "concord-explorers",        // see FACTIONS_AND_ART.md
     "role": "miner",                       // miner | combat | (scout|hauler|… later)
-    "art": "ships/prospector_mk1.svg",     // or parametric generator params
+    "art": "ships/concord/prospector.svg", // or { "generator": {…params…} }
+    "palette": { "hull": "--hull", "trim": "--trim",
+                 "glow": "--glow", "accent": "--accent" }, // faction color tokens
     "slots": { "weapon": 0, "engine": 1, "utility": 3 },
     "shared":  { "hullHp": 600, "shieldHp": 200, "shieldRegen": 10,
                  "speed": 12, "cargo": 1200 },
     "mining":  { "miningRate": 40 },       // units/sec on a node (ore/crystal/gas)
     "combat":  { "agility": 3, "range": 1, "missiles": 0, "countermeasures": 1 },
     "tags": ["economy", "fragile"],
-    "unlock": { "tech": "basic-hulls" }
+    "unlock": { "faction": "concord-explorers", "repTier": "friendly" }
   }
   ```
   A combat ship inverts the profile: high `agility`/`range`/`missiles`/

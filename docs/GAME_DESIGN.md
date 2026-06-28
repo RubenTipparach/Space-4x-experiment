@@ -128,6 +128,13 @@ designed to absorb them.
 - This makes the economy *and* combat interact: raiding enemy miners is a viable
   strategy; defending your extraction is a constant cost.
 
+### 3.4 Factions & acquisition
+- Players **pick a starting faction** (sets starting ships, home-base styling, and
+  initial standings). New ships are **earned through faction reputation** — by running
+  missions for a faction *or* by destroying that faction's enemies.
+- Full faction system, relationships, and the per-faction **SVG design language** live
+  in [`FACTIONS_AND_ART.md`](FACTIONS_AND_ART.md).
+
 ---
 
 ## 4. Combat (Deterministic, Reviewable)
