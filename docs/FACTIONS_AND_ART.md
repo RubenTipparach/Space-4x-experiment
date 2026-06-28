@@ -110,11 +110,15 @@ top-down sprite texture (`assets/sprites/`). This is fully compatible with the e
 plan — PixiJS draws the result as a normal sprite texture (`TECH_DESIGN.md` §4) — and
 gives shading, depth, and material richness that flat vector ships can't.
 
-- **Tooling (in-repo, reproducible):** procedural models built in **Three.js**,
-  rendered headless via **Chromium/WebGL** (`scripts/concept/render_sprites.mjs`). No
-  external DCC tool required; a model is code, so a faction's whole fleet stays
-  on-language and is regenerable. (Hand-authored models in Blender/glTF can be dropped
-  into the same render step later for hero ships.)
+- **Tooling (in-repo, reproducible):** procedural models generated and rendered in
+  **Blender** via the **`bpy` Python module** with the **Cycles** path-tracer
+  (`scripts/concept/blender_ships.py`). The hull uses the well-known greeble algorithm
+  (a1studmuffin *SpaceshipGenerator*): box → iterative segment extrudes → asymmetric
+  protrusions → face-categorized engines/greebles/lights → bevel → PBR materials, all
+  themed per faction (proportions, palette, glow, symmetry, organic flag). A model is
+  *code*, so a faction's whole fleet stays on-language and is regenerable; hand-authored
+  Blender/glTF hero ships can drop into the same render step later. *(An earlier
+  Three.js/Chromium-WebGL pass produced flat results — Blender/Cycles is the pipeline.)*
 - **Tradeoff vs. SVG:** sprites are raster, so we **render at multiple resolutions**
   (e.g. 2×/1×/0.5× + mipmaps) and pick per zoom/DPR to stay crisp across devices —
   replacing SVG's free infinite-scaling with a small sprite-atlas pipeline.
