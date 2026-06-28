@@ -244,9 +244,15 @@ GPUs. We handle this with:
   "build module Y"); the server validates, simulates, and broadcasts results. This
   is mandatory for a persistent economy.
 - **Tick-based simulation** per shard (e.g. 1–10 Hz for live systems; far slower or
-  event-driven for dormant ones). Long actions (travel, mining) are modeled as
-  **scheduled jobs** with deterministic completion times, so they resolve correctly
-  even if no one is watching.
+  event-driven for dormant ones). Long actions are modeled as **scheduled jobs** with
+  deterministic completion times, so they resolve correctly even if no one is
+  watching. Job types at launch:
+  - **In-system travel** — completes in ~seconds.
+  - **Interstellar travel** — completes in ~minutes (see [`GAME_DESIGN.md`](GAME_DESIGN.md) §5).
+  - **Mining** — accrues ore/crystal/gas into a ship's cargo at `miningRate`, capped
+    by `cargo` (GDD §2).
+  - **Construction** — building ships/structures at a base.
+  - **Combat** — resolved by the deterministic resolver (§6.4).
 - **Continuous world:** a background scheduler advances resource accrual, ship
   arrivals, and construction even while players are offline ("catch-up" computed
   from elapsed time on next load, plus periodic ticks for active systems).
@@ -256,6 +262,30 @@ GPUs. We handle this with:
   galaxy-level summaries. The server streams deltas only for that area-of-interest.
 - This bounds per-client bandwidth and per-server fan-out by *locality*, not by
   total world size — essential for "thousands of stars."
+
+### 6.4 Deterministic combat resolver & replay
+
+Combat is **fully deterministic from ship stats** (design in [`GAME_DESIGN.md`](GAME_DESIGN.md) §4).
+That property is an architectural gift:
+
+- **Pure-function resolver:** `resolveCombat(sideA, sideB, rulesetVersion[, seed]) →
+  { outcome, log }`. No hidden state; given the same inputs it always returns the same
+  result. Default to **no RNG** (purely stat-driven) for maximum analyzability; a
+  *recorded* seed is the only allowed source of variance, so results stay reproducible.
+- **Instant server-side resolution:** the server computes the entire battle in one
+  shot (max **100 rounds**, early-out on a destruction) rather than simulating it over
+  real time. Cheap, cheat-proof, and easy to reason about.
+- **Replay, not re-simulation on the client:** the resolver emits a compact
+  **round-by-round event log** (orderings, hits, damage, shield/hull after each step,
+  destructions). The client *animates the log* in the system view so players can watch
+  *how* the outcome was decided — the client never needs the combat math.
+- **Storage & audit:** persist the **inputs + ruleset version** (small, lets us
+  re-derive any battle for balance analysis or dispute resolution) plus the resolved
+  log for fast playback. Old replays stay faithful because each battle records the
+  `rulesetVersion` it was resolved under (balance changes are versioned — §9.3).
+- **Balance tooling:** because it's a pure function, we can batch-simulate matchups
+  offline (parameter sweeps over `agility`/`range`/`missiles`/`countermeasures`/
+  `shieldRegen`) to find dominant builds before shipping content.
 
 ---
 
@@ -425,20 +455,30 @@ Discord is both our **identity provider** and our **community surface**.
 **data, not code.**
 
 ### 9.1 Data-driven ship definitions
-- Each ship/hull is a JSON (DB-backed) record:
+- Each ship/hull is a JSON (DB-backed) record. Stats are split into shared,
+  mining, and combat groups so a `role` is just a stat profile (see
+  [`GAME_DESIGN.md`](GAME_DESIGN.md) §3):
   ```jsonc
   {
-    "id": "frigate-corsair-mk2",
-    "class": "frigate",
-    "art": "ships/corsair_mk2.svg",      // or parametric generator params
-    "slots": { "weapon": 2, "engine": 1, "utility": 3 },
-    "base": { "hp": 1200, "cargo": 400, "speed": 18, "scan": 6 },
-    "tags": ["military", "fast"],
-    "unlock": { "tech": "advanced-hulls" }
+    "id": "miner-prospector-mk1",
+    "role": "miner",                       // miner | combat | (scout|hauler|… later)
+    "art": "ships/prospector_mk1.svg",     // or parametric generator params
+    "slots": { "weapon": 0, "engine": 1, "utility": 3 },
+    "shared":  { "hullHp": 600, "shieldHp": 200, "shieldRegen": 10,
+                 "speed": 12, "cargo": 1200 },
+    "mining":  { "miningRate": 40 },       // units/sec on a node (ore/crystal/gas)
+    "combat":  { "agility": 3, "range": 1, "missiles": 0, "countermeasures": 1 },
+    "tags": ["economy", "fragile"],
+    "unlock": { "tech": "basic-hulls" }
   }
   ```
+  A combat ship inverts the profile: high `agility`/`range`/`missiles`/
+  `countermeasures`, low `miningRate`. Combat stats (`agility`, `range`, `missiles`,
+  `countermeasures`, `shieldRegen`) are the parameters the deterministic resolver
+  (§6.4) consumes and that we balance against each other.
 - A **module/component system** fills slots (weapons, engines, mining rigs, scanners)
-  with their own data records, so fleet-building is composition over data.
+  with their own data records that add/modify stats, so fleet-building is composition
+  over data.
 - Adding a ship = add a JSON record + an SVG (or generator params). **No engine
   changes, ideally no deploy** (load from DB / content service).
 
