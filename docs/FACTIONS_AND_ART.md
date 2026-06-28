@@ -102,7 +102,33 @@ you raise your standing with that faction by either:
   trademarks. No canon names, insignia, or recognizable copyrighted hull designs. Our
   factions, names, and emblems are original.
 
-### 3.2 SVG-first principles
+### 3.1b Ship-art pipeline decision: pre-rendered 3D sprites
+
+Initial SVG ship concepts (`assets/concept-art/`) read too flat. **Ships now use
+pre-rendered 3D sprites instead:** model each ship in 3D, light it, and render a
+top-down sprite texture (`assets/sprites/`). This is fully compatible with the engine
+plan — PixiJS draws the result as a normal sprite texture (`TECH_DESIGN.md` §4) — and
+gives shading, depth, and material richness that flat vector ships can't.
+
+- **Tooling (in-repo, reproducible):** procedural models built in **Three.js**,
+  rendered headless via **Chromium/WebGL** (`scripts/concept/render_sprites.mjs`). No
+  external DCC tool required; a model is code, so a faction's whole fleet stays
+  on-language and is regenerable. (Hand-authored models in Blender/glTF can be dropped
+  into the same render step later for hero ships.)
+- **Tradeoff vs. SVG:** sprites are raster, so we **render at multiple resolutions**
+  (e.g. 2×/1×/0.5× + mipmaps) and pick per zoom/DPR to stay crisp across devices —
+  replacing SVG's free infinite-scaling with a small sprite-atlas pipeline.
+- **Faction palette** still lives in data: model materials read from the faction's
+  color tokens (§4), so re-skinning a hull for another faction means swapping the
+  palette and re-rendering, not remodeling.
+- **Roles & multi-angle:** one model yields the miner/combat/hero variants by
+  swapping kit parts; if gameplay needs rotation beyond cheap runtime sprite rotation,
+  we can pre-render an angle set per ship.
+- **SVG is retained** for **UI/HUD, icons, insignia, and procedural overlays**
+  (selection rings, trajectories, damage states) — see §3.2; it's the in-world *ship
+  bodies* that move to 3D sprites.
+
+### 3.2 SVG principles (UI, icons, overlays)
 - **Top-down canonical orientation:** every ship is authored **nose-up**, centered, in
   a square `viewBox` (e.g. `0 0 100 100`), so the renderer can rotate/scale freely.
 - **Palette via tokens, not hard-coded fills:** ships reference **CSS variables /
