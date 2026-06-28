@@ -107,7 +107,9 @@ designed to absorb them.
 - `miningRate` — resource units mined per unit time when stationed on a node.
 
 **Combat stats** *(to be tuned; this is the working set):*
-- `agility` — evasion; reduces the chance/effectiveness of incoming hits.
+- `agility` — evasion; reduces the chance/effectiveness of incoming hits. Also the
+  **survival/escape stat**: there is no retreat, so a high-agility ship survives by
+  dodging long enough to reach the round-100 stalemate and disengage (§4.3).
 - `range` — engagement distance; **longer range fires first / out-ranges shorter
   ships** (initiative & first-strike).
 - `missiles` — primary offensive weapon profile (volley size / damage / type).
@@ -165,9 +167,12 @@ Each round, deterministically:
   broken by the seed.
 - **End condition:** a side loses when **all its ships are destroyed**; otherwise the
   round-100 stalemate (§4.1) applies and both fleets disengage with damage.
-- **Retreat (MVP):** no early/voluntary retreat — fights run to a wipe or the
-  round-100 stalemate. *(Planned fast-follow: a **player-set retreat threshold**, e.g.
-  "disengage at <30% fleet strength," letting a fleet bug out early with damage.)*
+- **No retreat mechanic.** There is no voluntary or threshold-based disengage —
+  fights run to a wipe or the round-100 stalemate. **Survival *is* the escape route:**
+  a ship with high `agility` (evasion) can dodge enough incoming fire to **last all
+  100 rounds and walk away** via the stalemate disengage (with whatever damage it
+  took). This makes `agility` the defensive/escape stat — evasion-built ships (e.g.
+  fast scouts or fleeing miners) survive by not dying rather than by bugging out.
 
 ### 4.5 Watching / reviewing a battle
 - The server resolves combat instantly and produces a **round-by-round event log**
@@ -180,9 +185,10 @@ Each round, deterministically:
 
 ### 4.6 Open combat questions (tuning only)
 - Exact numeric formulas: how `agility` and `countermeasures` convert to mitigation,
-  and the missile damage curve.
-- Round-100 stalemate frequency — tune stats/round cap so true stalemates are rare.
-- Whether the player-set retreat threshold (§4.3) lands in MVP or the fast-follow.
+  and the missile damage curve. (Agility tuning is now doubly important — it governs
+  both in-fight survivability *and* the round-100 escape, §4.3.)
+- Round-100 stalemate frequency — tune so reaching round 100 is an *earned* outcome
+  of high evasion, not a default for ordinary ships.
 
 ---
 
@@ -233,17 +239,18 @@ Two scales of travel, both modeled as timed jobs (see `TECH_DESIGN.md` §6.2):
 - Combat uses a **per-battle GUID seed ID** for reproducible variance/tie-breaks (§4.2).
 - Fleet combat: **focus-fire the weakest**; a side loses when **all its ships die**;
   round-100 **stalemate = both disengage with damage** (§4.1, §4.3).
+- **No retreat mechanic** — survival is via **evasion** (high `agility` lasts to the
+  round-100 stalemate and escapes); `agility` is the defensive/escape stat (§4.3).
 - Miners deposit at the **home base only** for MVP (§2.1).
 - **5 Lagrange slots per gas giant** (§2.2).
 - Resource identities: **ore→hulls/structures, crystal→shields/electronics/modules,
   gas→fuel & advanced/energy** (§2.4).
 
 **Still open:**
-1. Player-set **retreat threshold** — MVP or fast-follow? (§4.3, §4.6)
-2. Are Lagrange slots **claimable/holdable** (persistent ownership) or pure
+1. Are Lagrange slots **claimable/holdable** (persistent ownership) or pure
    first-come occupancy?
-3. Combat **numeric formulas** for agility/countermeasures mitigation (§4.6).
-4. Post-MVP: depositing at **forward/owned bases** beyond the home base (§2.1).
+2. Combat **numeric formulas** for agility/countermeasures mitigation (§4.6).
+3. Post-MVP: depositing at **forward/owned bases** beyond the home base (§2.1).
 
 ---
 
