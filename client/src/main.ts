@@ -65,9 +65,13 @@ async function main() {
   controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };   // mobile: drag to pan, pinch to zoom
 
   // ---------- lighting (for the glTF ships; planets self-shade in their shaders) ----------
-  const sunLight = new THREE.PointLight(0xfff0d0, 3.2, 0, 0); // decay 0 → reaches the whole system
-  scene.add(sunLight);                                        // at origin (the star)
-  scene.add(new THREE.HemisphereLight(0x6a82c0, 0x140c20, 0.6));
+  // The star is in the orbital plane, so its light grazes ship decks in a top-down view.
+  // Lift the key light well above the plane (still roughly over the star) so the sunlit
+  // side and the decks both read, and keep fill low so the direction actually shapes hulls.
+  const sunLight = new THREE.PointLight(0xfff2d8, 3.8, 0, 0); // decay 0 → reaches the whole system
+  sunLight.position.set(0, 650, 0);
+  scene.add(sunLight);
+  scene.add(new THREE.HemisphereLight(0x5a74b0, 0x120a1e, 0.3));
   // neutral studio environment so metallic ship hulls reflect light instead of reading black
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -172,7 +176,7 @@ async function main() {
       // normalize size: scale longest bbox axis to ~24 units
       const box = new THREE.Box3().setFromObject(obj); const size = new THREE.Vector3(); box.getSize(size);
       const s = 24 / Math.max(size.x, size.y, size.z); obj.scale.setScalar(s);
-      obj.traverse((o: any) => { if (o.isMesh && o.material) { o.material.envMapIntensity = 0.9; } });
+      obj.traverse((o: any) => { if (o.isMesh && o.material) { o.material.envMapIntensity = 0.5; } });
     } catch (e) {
       obj = new THREE.Mesh(new THREE.ConeGeometry(6, 18, 6), new THREE.MeshStandardMaterial({ color: def.color }));
       console.error('ship load', def.id, e);
