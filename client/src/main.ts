@@ -10,7 +10,8 @@ const SHIP_SPEED = 150;
 const TURN_RATE = 6;               // rad/s — smooth turning between frames
 const MINE_RATE = 22;
 const CARGO_CAP = 100;
-const HQ = { x: 250, y: -300 };   // clear of the star's glow so ships read
+const ISO = 0.58;                  // vertical squash → isometric/oblique orbital plane
+const HQ = { x: 250, y: -300 * ISO };   // clear of the star's glow so ships read
 const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const TEX_LIGHT_ANGLE = Math.atan2(0.42 - 0.5, 0.72 - 0.5); // sphere highlight direction
 
@@ -154,9 +155,9 @@ async function main() {
   };
 
   for (const p of PLANETS) {
-    world.addChild(new Graphics().circle(0, 0, p.orbit).stroke({ width: 1, color: 0x223247, alpha: 0.45 }));
+    world.addChild(new Graphics().ellipse(0, 0, p.orbit, p.orbit * ISO).stroke({ width: 1, color: 0x223247, alpha: 0.45 }));
     const pc = new Container();
-    pc.x = Math.cos(p.angle0) * p.orbit; pc.y = Math.sin(p.angle0) * p.orbit;
+    pc.x = Math.cos(p.angle0) * p.orbit; pc.y = Math.sin(p.angle0) * p.orbit * ISO;
     world.addChild(pc);
     orbiters.push({ c: pc, orbit: p.orbit, angle: p.angle0, speed: p.speed });
 
@@ -183,7 +184,7 @@ async function main() {
     if (p.type === 'gas') {
       for (let n = 0; n < GAS_NODES; n++) {
         const nc = new Container(); const na = (n / GAS_NODES) * Math.PI * 2; const nd = p.size + 26;
-        nc.x = Math.cos(na) * nd; nc.y = Math.sin(na) * nd;
+        nc.x = Math.cos(na) * nd; nc.y = Math.sin(na) * nd * ISO;
         const g = new Graphics().circle(0, 0, 6).fill({ color: RES_COLOR.gas }).circle(0, 0, 10).stroke({ width: 1.5, color: RES_COLOR.gas, alpha: 0.5 });
         nc.addChild(g); pc.addChild(nc);
         const mt: MineTarget = { name: `${p.name} node ${n + 1}`, resource: 'gas', radius: 12, pos: () => worldPos(nc) };
@@ -196,7 +197,7 @@ async function main() {
 
     for (const m of (p.moons ?? [])) {
       const mc = new Container();
-      mc.x = pc.x + Math.cos(m.angle0) * m.dist; mc.y = pc.y + Math.sin(m.angle0) * m.dist;
+      mc.x = pc.x + Math.cos(m.angle0) * m.dist; mc.y = pc.y + Math.sin(m.angle0) * m.dist * ISO;
       world.addChild(mc); spinners.push({ c: mc, parent: pc, dist: m.dist, angle: m.angle0, speed: m.speed });
       const mb = new Sprite(SPHERE); mb.anchor.set(0.5); mb.tint = 0xc2c8d2; mb.width = mb.height = m.size * 2;
       mc.addChild(mb); shaded.push({ spr: mb, c: mc });
@@ -348,13 +349,13 @@ async function main() {
   let T = 0;
   function step(dt: number) {
     T += dt;
-    for (const o of orbiters) { o.angle += o.speed * dt; o.c.x = Math.cos(o.angle) * o.orbit; o.c.y = Math.sin(o.angle) * o.orbit; }
-    for (const s of spinners) { s.angle += s.speed * dt; s.c.x = s.parent.x + Math.cos(s.angle) * s.dist; s.c.y = s.parent.y + Math.sin(s.angle) * s.dist; }
-    for (const b of shaded) b.spr.rotation = Math.atan2(-b.c.y, -b.c.x) - TEX_LIGHT_ANGLE;
-    for (const r of belt) { r.angle += r.speed * dt; r.g.x = Math.cos(r.angle) * r.r; r.g.y = Math.sin(r.angle) * r.r; r.g.rotation += r.spin * dt; }
+    for (const o of orbiters) { o.angle += o.speed * dt; o.c.x = Math.cos(o.angle) * o.orbit; o.c.y = Math.sin(o.angle) * o.orbit * ISO; }
+    for (const s of spinners) { s.angle += s.speed * dt; s.c.x = s.parent.x + Math.cos(s.angle) * s.dist; s.c.y = s.parent.y + Math.sin(s.angle) * s.dist * ISO; }
+    for (const b of shaded) b.spr.rotation = Math.atan2(-b.c.y / ISO, -b.c.x) - TEX_LIGHT_ANGLE;
+    for (const r of belt) { r.angle += r.speed * dt; r.g.x = Math.cos(r.angle) * r.r; r.g.y = Math.sin(r.angle) * r.r * ISO; r.g.rotation += r.spin * dt; }
     for (const cm of comets) {
       cm.angle += cm.speed * dt;
-      cm.c.x = Math.cos(cm.angle) * cm.rx; cm.c.y = Math.sin(cm.angle) * cm.ry;
+      cm.c.x = Math.cos(cm.angle) * cm.rx; cm.c.y = Math.sin(cm.angle) * cm.ry * ISO;
       cm.tail.rotation = Math.atan2(cm.c.y, cm.c.x);  // tail points away from the star
     }
 
