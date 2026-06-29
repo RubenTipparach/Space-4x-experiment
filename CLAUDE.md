@@ -94,6 +94,13 @@ mining→HQ, and resource tags. Run: `cd client && npm install && npm run dev`. 
 `client/README.md`. Renderer is WebGL by default (`?r=webgpu` to opt in); headless
 software-GL can't init Pixi, so run it in a real browser.
 
+### Visual claims require a screenshot (IMPORTANT)
+
+**Never claim anything about how the game/app looks unless a screenshot proves it.**
+Build → serve → screenshot (recipe below) and actually look at the image before saying
+"it renders / the ships show / the nebula looks X". Code that compiles is not evidence
+of what's on screen. Attach the screenshot when reporting a visual result.
+
 ### Rendering game previews in the cloud (headless screenshots)
 
 The client can be screenshotted headlessly here (no GPU) — useful for verifying the

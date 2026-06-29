@@ -1,15 +1,15 @@
-import { Application, Container, Graphics, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Text, Texture, Assets } from 'pixi.js';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
 
 const BASE = import.meta.env.BASE_URL;
 const ANGLES = 24;
-const SHIP_SCALE = 0.16;
+const SHIP_SCALE = 0.26;
 const SHIP_SPEED = 150;
 const MINE_RATE = 22;
 const CARGO_CAP = 100;
-const HQ = { x: 70, y: -150 };
+const HQ = { x: 250, y: -300 };   // clear of the star's glow so ships read
 const TEX_LIGHT_ANGLE = Math.atan2(0.42 - 0.5, 0.72 - 0.5); // sphere highlight direction
 
 const frameUrl = (fid: string, idx: number) =>
@@ -62,28 +62,22 @@ const GLOW = canvasTex(128, 128, (x, w, h) => {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   x.fillStyle = g; x.fillRect(0, 0, w, h);
 });
-function starTile(n: number, maxR: number, bright: number): Texture {
-  return canvasTex(256, 256, (x, w, h) => {
-    for (let i = 0; i < n; i++) {
-      const a = bright * (0.4 + Math.random() * 0.6);
-      x.fillStyle = `rgba(255,255,255,${a})`;
-      x.beginPath(); x.arc(Math.random() * w, Math.random() * h, Math.random() * maxR + 0.3, 0, 7); x.fill();
-    }
-  });
-}
-const NEBULA = canvasTex(512, 512, (x, w, h) => {
-  const blobs = [['#3a2d6b', 0.5], ['#1f4d6b', 0.45], ['#5a2a55', 0.4], ['#23506b', 0.4]] as const;
+const NEB_COLORS = ['#6a37e0', '#c0379f', '#1f9fc0', '#3a5be0', '#9b4fe0', '#e06aa0'];
+const a2 = (a: number) => Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+const pick = (arr: string[]) => arr[(Math.random() * arr.length) | 0];
+// One vibrant, non-tiling nebula across the whole canvas (no repeating grid).
+function drawNebula(x: CanvasRenderingContext2D, w: number, h: number) {
+  x.clearRect(0, 0, w, h);
   x.globalCompositeOperation = 'lighter';
-  for (const [col, al] of blobs) {
-    for (let i = 0; i < 3; i++) {
-      const cx = Math.random() * w, cy = Math.random() * h, r = 120 + Math.random() * 180;
-      const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
-      g.addColorStop(0, col + Math.round(al * 90).toString(16).padStart(2, '0'));
-      g.addColorStop(1, col + '00');
-      x.fillStyle = g; x.fillRect(0, 0, w, h);
-    }
-  }
-});
+  const blob = (cx: number, cy: number, r: number, col: string, al: number) => {
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, col + a2(al)); g.addColorStop(0.55, col + a2(al * 0.35)); g.addColorStop(1, col + '00');
+    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill();
+  };
+  for (let i = 0; i < 16; i++) blob(Math.random() * w, Math.random() * h, 160 + Math.random() * 360, pick(NEB_COLORS), 0.10 + Math.random() * 0.12);
+  for (let i = 0; i < 54; i++) blob(Math.random() * w, Math.random() * h, 40 + Math.random() * 130, pick(NEB_COLORS), 0.08 + Math.random() * 0.14);
+  for (let i = 0; i < 600; i++) { x.fillStyle = pick(NEB_COLORS) + '12'; x.beginPath(); x.arc(Math.random() * w, Math.random() * h, Math.random() * 1.6, 0, 7); x.fill(); }
+}
 
 main().catch((err) => { showErr('Boot error: ' + (err?.message || err)); console.error(err); });
 
@@ -99,16 +93,25 @@ async function main() {
   app.stage.addChild(bg);
   const sizeBg = () => bg.clear().rect(0, 0, app.screen.width, app.screen.height).fill({ color: 0x000000, alpha: 0.001 });
 
-  // parallax background layers (screen space, behind the world)
-  const bgLayers: { ts: TilingSprite; f: number }[] = [];
-  const addLayer = (tex: Texture, f: number, alpha: number, scale = 1) => {
-    const ts = new TilingSprite({ texture: tex, width: app.screen.width, height: app.screen.height });
-    ts.alpha = alpha; ts.tileScale.set(scale); app.stage.addChild(ts); bgLayers.push({ ts, f }); return ts;
-  };
-  addLayer(NEBULA, 0.05, 0.4, 3.2);   // big tileScale → seams off-screen
-  addLayer(starTile(40, 0.9, 0.5), 0.15, 0.7);
-  addLayer(starTile(28, 1.3, 0.8), 0.32, 0.85);
-  addLayer(starTile(16, 1.8, 1.0), 0.55, 1.0);
+  // STATIC background (screen space, no parallax — distant stars don't move).
+  // Rebuilt on resize to cover the viewport; single image so there is no tiling grid.
+  const bgVisual = new Container(); bgVisual.eventMode = 'none'; app.stage.addChild(bgVisual);
+  function buildBackground() {
+    bgVisual.removeChildren();
+    const w = app.screen.width, h = app.screen.height;
+    const neb = new Sprite(canvasTex(Math.min(w, 1920), Math.min(h, 1200), drawNebula));
+    neb.width = w; neb.height = h; neb.alpha = 0.9; bgVisual.addChild(neb);
+    const g = new Graphics();
+    const n = Math.floor(w * h / 5200);
+    for (let i = 0; i < n; i++) {
+      const big = Math.random() < 0.14;
+      const size = big ? 1.0 + Math.random() * 1.7 : 0.3 + Math.random() * 1.0;
+      const a = big ? 0.6 + Math.random() * 0.4 : 0.18 + Math.random() * 0.4;
+      const col = Math.random() < 0.15 ? 0xbcd2ff : Math.random() < 0.1 ? 0xffe6c8 : 0xffffff;
+      g.circle(Math.random() * w, Math.random() * h, size).fill({ color: col, alpha: a });
+    }
+    bgVisual.addChild(g);
+  }
 
   // world (camera)
   const world = new Container();
@@ -213,17 +216,24 @@ async function main() {
   hqLabel.anchor.set(0.5, 0); hqLabel.y = 20; hq.addChild(hqLabel);
   hoverable(hq, '<div class="t-name">Headquarters</div><div class="t-tags">deposit point</div>');
 
-  // ---------- fleet (lazy textures so boot never blocks) ----------
+  // ---------- fleet ----------
   function buildFleet() {
+    const urls: string[] = [];
+    for (const def of FACTIONS) for (let k = 0; k < ANGLES; k++) urls.push(frameUrl(def.id, k));
     ships = FACTIONS.map((def, i) => {
       const frames = Array.from({ length: ANGLES }, (_, k) => Texture.from(frameUrl(def.id, k)));
       const sprite = new Sprite(frames[0]); sprite.anchor.set(0.5); sprite.scale.set(SHIP_SCALE);
-      const ring = new Graphics().circle(0, 0, 26).stroke({ width: 2, color: 0x5ec8ff, alpha: 0.9 }); ring.visible = false;
-      const sc = new Container(); const start: Vec = { x: HQ.x + (i - 3.5) * 10, y: HQ.y + 30 };
+      const ring = new Graphics().circle(0, 0, 30).stroke({ width: 2, color: 0x5ec8ff, alpha: 0.9 }); ring.visible = false;
+      const sc = new Container(); const start: Vec = { x: HQ.x + (i - 3.5) * 34, y: HQ.y + (i % 2 ? 26 : 54) };
       sc.x = start.x; sc.y = start.y; sc.addChild(ring, sprite); world.addChild(sc);
       return { def, sprite, frames, ring, sc, pos: { ...start }, state: 'idle' as const, moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0 };
     });
     buildToolbar();
+    // Load frames in the background (Texture.from alone doesn't fetch reliably in v8),
+    // then point each ship's frames at the loaded textures so sprites actually render.
+    Assets.load(urls).then(() => {
+      for (const s of ships) s.frames = Array.from({ length: ANGLES }, (_, k) => Assets.get(frameUrl(s.def.id, k)) as Texture);
+    }).catch((e) => console.error('sprite load', e));
   }
 
   // ---------- input ----------
@@ -288,14 +298,13 @@ async function main() {
   function fitCamera() { world.scale.set(Math.min(app.screen.width, app.screen.height) / 2520); world.x = app.screen.width / 2; world.y = app.screen.height / 2; }
   function onResize() {
     sizeBg();
-    for (const L of bgLayers) { L.ts.width = app.screen.width; L.ts.height = app.screen.height; }
+    buildBackground();
     fitCamera();
   }
   window.addEventListener('resize', onResize);
 
   // ---------- loop ----------
   function step(dt: number) {
-    for (const L of bgLayers) L.ts.tilePosition.set(world.x * L.f, world.y * L.f);
     for (const o of orbiters) { o.angle += o.speed * dt; o.c.x = Math.cos(o.angle) * o.orbit; o.c.y = Math.sin(o.angle) * o.orbit; }
     for (const s of spinners) { s.angle += s.speed * dt; s.c.x = s.parent.x + Math.cos(s.angle) * s.dist; s.c.y = s.parent.y + Math.sin(s.angle) * s.dist; }
     for (const b of shaded) b.spr.rotation = Math.atan2(-b.c.y, -b.c.x) - TEX_LIGHT_ANGLE;
