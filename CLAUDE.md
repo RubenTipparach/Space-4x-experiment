@@ -1,0 +1,67 @@
+# CLAUDE.md — project guide
+
+**Stellar Frontier** — a long-running, top-down, browser-based sci-fi MMO (Thallian
+Nebula setting). This file orients work in the repo and records conventions worth
+keeping. Design docs live in `docs/`:
+
+- `docs/TECH_DESIGN.md` — engine (PixiJS), networking, Fly.io backend, single-universe
+  sharding, Discord, persistence.
+- `docs/GAME_DESIGN.md` — resources, mining, ship roles, deterministic combat, travel.
+- `docs/FACTIONS_AND_ART.md` — factions, design languages, ship classes, sprite spec.
+- `docs/source/` — source lore (Fallen Tribes / Council Archives).
+
+## Art pipeline: procedural ships (Blender → sprites)
+
+Ship art is **3D modeled procedurally in Blender** (the `bpy` Python module) and
+**rendered with Cycles** to top-down sprite textures that PixiJS draws. Earlier
+Three.js/WebGL and flat-SVG passes were abandoned — Blender/Cycles is the pipeline.
+
+Scripts (`scripts/concept/`):
+- `blender_clean.py` — the production modeler/renderer. Hand-built, deliberate
+  hard-surface ships (one builder per faction). `ANGLES=24 python3
+  scripts/concept/blender_clean.py [faction-id ...]` renders the 24-angle turnaround;
+  default `ANGLES=1` renders just the hero 3/4 view for review.
+- `make_sheet.mjs` / `make_turn.mjs` — compose comparison / turnaround PNGs
+  (`PW_PATH="$(npm root -g)/playwright" node scripts/concept/make_sheet.mjs`).
+- `blender_ships.py` — older random-greeble generator; produces messy hulls, kept only
+  for reference. Prefer `blender_clean.py`.
+
+Setup notes: `pip install bpy` (Blender as a module) and `npm install three` are used;
+Cycles runs on CPU here (no GPU). Chromium for sheet compositing is the preinstalled
+Playwright browser.
+
+### Ship modeling rules (IMPORTANT — follow these)
+
+Messy ships come from asymmetric parts straddling the centerline. The discipline:
+
+1. **Orientation:** forward = `+Y` (nose), up = `+Z`, right = `+X`. The centerline is
+   the plane `x = 0`.
+2. **Build a symmetric core first.** Core hull pieces are either **centered on `x = 0`**
+   (so they're symmetric about the centerline) or added as **mirrored pairs** via
+   `pair(lambda sx: ...)`. Major features (wings, nacelles, engines, fins) should be
+   mirrored pairs — not one-off asymmetric shapes.
+3. **Add asymmetry only as detail that never crosses the centerline.** Any non-centered,
+   non-mirrored shape must lie **entirely on one side** of `x = 0`. Wrap every such
+   shape in **`offside(...)`**, which asserts/pushes the shape so its bounding box does
+   not cross the midline. Never place a lone shape whose bounds span `x = 0`.
+4. **Hard-surface look:** flat shading + a Bevel modifier (chamfered edges) for hull
+   plates and boxes; smooth shading **only** on inherently round parts (cylindrical
+   nacelles/tubes/discs). Avoid smooth ellipsoid "blobs" — they read as organic unless
+   doing true subdiv/NURBS surfacing.
+5. **Glow:** emissive materials for engines/windows/accents, colored by the faction's
+   glow token.
+
+Result: a clean symmetric silhouette with believable one-sided greeble — not random
+boxes stacked across the middle.
+
+### Sprite spec
+
+Top-down 3/4 view, **24 yaw angles per ship** (360 / 15°), fixed elevation. 6 ship
+classes × 8 factions = 48 ships → **1,152 sprites** (before resolution/LOD variants).
+See `docs/FACTIONS_AND_ART.md` §5b–5c.
+
+## Git / workflow
+
+- Develop on `claude/scifi-mmo-engine-research-e1h48o`; open draft PRs.
+- `node_modules/` is gitignored; committed art lives in `assets/` (`concept-art/` =
+  SVG attempts, `sprites/clean/` = current Blender renders).

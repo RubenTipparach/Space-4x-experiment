@@ -92,6 +92,26 @@ def wing(span, chord, thick, loc, sweep, mat, tilt=0.0):  # swept hard-surface w
     return box((span, chord, thick), loc, (tilt, 0, sweep), mat, smooth=False, bevel=0.04)
 
 
+def offside(obj, gap=0.06):
+    """Enforce the asymmetry rule: a detail shape must lie entirely on one side of
+    the centerline (x=0). If its bounding box straddles x=0, push it fully to the
+    side its center is on. Use for ALL non-centered, non-mirrored detail."""
+    xs = [(obj.matrix_world @ Vector(c)).x for c in obj.bound_box]
+    mn, mx = min(xs), max(xs)
+    if mn < -gap and mx > gap:
+        obj.location.x += (gap - mn) if (mn + mx) / 2 >= 0 else -(mx + gap)
+    return obj
+
+
+def pair(fn):
+    """Build a mirrored pair for symmetric side-detail: fn(sx) for sx in (-1, +1)."""
+    out = []
+    for sx in (-1, 1):
+        r = fn(sx)
+        out += r if isinstance(r, list) else [r]
+    return out
+
+
 # ---------------- builders (forward = +Y, up = +Z) ----------------
 def consortium():
     # hard-surface: chamfered discs/boxes, flat panels; smooth only on round tubes
@@ -146,19 +166,19 @@ def terra():  # blocky frontier salvage, asymmetric, rust
     tan = pmat("tan", (0.7, 0.55, 0.3), 0.65, 0.6)
     glow = emat("glow", (1.0, 0.5, 0.2), 10)
     o = []
+    # symmetric core (centered hull/nose/deck + mirrored engines/guns)
     o += [box((1.0, 2.1, 0.72), (0, 0, 0), (0, 0, 0), rust, bevel=0.08)]
     o += [box((0.72, 0.6, 0.56), (0, 1.25, 0.02), (0, 0, 0), rust, bevel=0.06)]
     o += [box((0.74, 1.5, 0.16), (0, -0.1, 0.46), (0, 0, 0), dark)]
-    o += [box((0.7, 0.9, 0.6), (-1.0, -0.2, 0), (0, 0, 0), dark, bevel=0.05)]  # salvage pod
-    o += [box((0.18, 0.5, 0.18), (-0.62, -0.2, 0), (0, 0, math.radians(90)), tan)]  # strut
-    o += [cyl(0.04, 1.2, (0.95, 0.4, 0.3), (0, math.radians(20), 0), tan)]  # antenna
-    o += [sphere((1.18, 0.95, 0.42), (0.08, 0.08, 0.08), glow)]
-    for sx in (-0.4, 0.4):
-        o += [cyl(0.3, 0.7, (sx, -1.25, 0), (math.radians(90), 0, 0), dark)]
-        o += [disc(0.26, 0.06, (sx, -1.55, 0), glow)]
-    for sx in (-0.55, 0.55):
-        o += [cyl(0.06, 1.0, (sx, 1.4, 0.2), (math.radians(90), 0, 0), tan)]  # gun
-    o += [box((0.4, 0.35, 0.3), (0.35, 0.5, 0.5), (0, 0, 0), tan)]
+    o += pair(lambda sx: [cyl(0.3, 0.7, (sx * 0.4, -1.25, 0), (math.radians(90), 0, 0), dark),
+                          disc(0.26, 0.06, (sx * 0.4, -1.55, 0), glow)])
+    o += pair(lambda sx: cyl(0.06, 1.0, (sx * 0.55, 1.4, 0.2), (math.radians(90), 0, 0), tan))  # guns
+    # asymmetric salvage detail — each fully one-sided (offside guards the centerline)
+    o += [offside(box((0.7, 0.9, 0.6), (-1.0, -0.2, 0), (0, 0, 0), dark, bevel=0.05))]   # salvage pod L
+    o += [offside(box((0.18, 0.5, 0.18), (-0.62, -0.2, 0), (0, 0, math.radians(90)), tan))]  # strut L
+    o += [offside(cyl(0.04, 1.2, (0.95, 0.4, 0.3), (0, math.radians(20), 0), tan))]      # antenna R
+    o += [offside(sphere((1.18, 0.95, 0.42), (0.08, 0.08, 0.08), glow))]
+    o += [offside(box((0.4, 0.35, 0.3), (0.4, 0.5, 0.5), (0, 0, 0), tan))]               # crate R
     return o
 
 
@@ -176,22 +196,22 @@ def illumaria():  # sleek dark stealth arrowhead, magenta glow
     return o
 
 
-def astryn():  # scrappy rebel strike fighter, asymmetric, olive+orange
+def astryn():  # scrappy rebel strike fighter — symmetric core, one-sided detail
     olive = pmat("olive", (0.36, 0.4, 0.27), 0.5, 0.7)
     dark = pmat("dark", (0.2, 0.22, 0.14), 0.5, 0.8)
     orange = pmat("orange", (0.84, 0.51, 0.18), 0.6, 0.5)
     glow = emat("glow", (0.61, 0.91, 0.29), 11)
     o = []
+    # symmetric core (centered + mirrored pairs)
     o += [box((0.62, 2.1, 0.46), (0, 0, 0), (0, 0, 0), olive, bevel=0.07)]
     o += [nose_cone(0.32, 0.9, 1.4, olive)]
-    o += [box((0.16, 1.3, 0.1), (0, -0.2, 0.3), (0, 0, 0), orange)]  # stripe
-    o += [box((0.45, 0.5, 0.4), (-0.42, 0.2, 0.1), (0, 0, 0), dark)]  # mismatched panel
-    for sx, dz in ((-1, 0.2), (1, -0.2)):
-        o += [wing(1.6, 0.7, 0.08, (sx * 0.85, -0.2, dz), sx * -0.3, olive)]
-        o += [wing(1.2, 0.5, 0.07, (sx * 0.85, -0.7, -dz), sx * -0.3, dark)]
-    for sx in (-0.4, 0.4):
-        o += [cyl(0.2, 0.6, (sx, -1.2, 0), (math.radians(90), 0, 0), dark)]
-        o += [disc(0.17, 0.05, (sx, -1.45, 0), glow)]
+    o += [box((0.16, 1.3, 0.1), (0, -0.2, 0.3), (0, 0, 0), orange)]  # centered stripe
+    o += pair(lambda sx: wing(1.5, 0.7, 0.08, (sx * 0.95, -0.25, 0), sx * -0.3, olive))
+    o += pair(lambda sx: [cyl(0.2, 0.6, (sx * 0.4, -1.2, 0), (math.radians(90), 0, 0), dark),
+                          disc(0.17, 0.05, (sx * 0.4, -1.45, 0), glow)])
+    # asymmetric flavor — each entirely on one side (offside guards the centerline)
+    o += [offside(box((0.42, 0.5, 0.42), (-0.6, 0.25, 0.14), (0, 0, 0), dark))]      # patch panel L
+    o += [offside(box((0.14, 0.7, 0.14), (0.66, 0.4, 0.2), (0, 0, 0), orange))]      # sensor pod R
     return o
 
 
@@ -213,20 +233,23 @@ def ezrathi():  # angular void-cult monolith, obsidian, green/violet glow
     return o
 
 
-def krithul():  # hard-surface bio-blight, chunky asymmetric, toxic green
+def krithul():  # bio-blight — symmetric core hull, one-sided lumps for organic asymmetry
     flesh = pmat("flesh", (0.43, 0.48, 0.18), 0.15, 0.85)
     dark = pmat("dark", (0.3, 0.32, 0.12), 0.2, 0.85)
     glow = emat("glow", (0.78, 1.0, 0.23), 12)
     o = []
-    o += [prism(6, 0.72, 1.7, (0, -0.1, 0), (math.radians(90), 0, 0), flesh, bevel=0.16)]
-    o += [box((0.8, 1.0, 0.66), (0.28, 0.5, 0.06), (0, 0, math.radians(12)), flesh, bevel=0.14)]
-    o += [box((0.6, 0.8, 0.55), (-0.34, -0.3, -0.05), (0, 0, math.radians(-10)), flesh, bevel=0.14)]
-    o += [nose_cone(0.4, 0.8, 1.15, flesh)]
-    for x, y, z, r in ((0.32, 0.55, 0.36, 0.16), (-0.4, 0.0, 0.34, 0.2), (0.45, -0.4, 0.3, 0.13)):
-        o += [sphere((x, y, z), (r, r, r), glow)]
-    for sx, ang in ((-1, -0.25), (1, 0.2)):
-        o += [cyl(0.1, 1.0, (sx * 0.35, -1.1, -0.05), (math.radians(70), 0, ang), dark)]  # tendril
-    o += [disc(0.32, 0.07, (0, -1.0, 0), glow)]
+    # symmetric core
+    o += [prism(6, 0.72, 2.0, (0, 0, 0), (math.radians(90), 0, 0), flesh, bevel=0.18)]
+    o += [nose_cone(0.42, 0.85, 1.25, flesh)]
+    o += [disc(0.32, 0.07, (0, -1.0, 0), glow)]               # centered drive
+    o += [sphere((0, 0.45, 0.42), (0.18, 0.18, 0.18), glow)]  # centered pustule
+    # one-sided lumps (each fully off the centerline)
+    o += [offside(box((0.7, 0.95, 0.6), (0.6, 0.45, 0.06), (0, 0, math.radians(12)), flesh, bevel=0.16))]
+    o += [offside(box((0.55, 0.7, 0.5), (-0.55, -0.25, -0.05), (0, 0, math.radians(-10)), flesh, bevel=0.16))]
+    o += [offside(sphere((0.55, -0.2, 0.36), (0.15, 0.15, 0.15), glow))]
+    o += [offside(sphere((-0.45, 0.15, 0.34), (0.17, 0.17, 0.17), glow))]
+    # symmetric tendrils
+    o += pair(lambda sx: cyl(0.1, 1.0, (sx * 0.34, -1.1, -0.05), (math.radians(72), 0, sx * 0.2), dark))
     return o
 
 
@@ -294,11 +317,12 @@ def render(path):
     sc = bpy.context.scene; sc.render.engine = "CYCLES"
     try: sc.cycles.device = "CPU"
     except Exception: pass
-    sc.cycles.samples = 160
+    sc.cycles.samples = int(os.environ.get("SAMPLES", "160"))
     try: sc.cycles.use_denoising = True
     except Exception: pass
     sc.render.film_transparent = True
-    sc.render.resolution_x = sc.render.resolution_y = 768
+    res = int(os.environ.get("RES", "768"))
+    sc.render.resolution_x = sc.render.resolution_y = res
     sc.render.image_settings.file_format = "PNG"; sc.render.image_settings.color_mode = "RGBA"
     sc.render.filepath = path; bpy.ops.render.render(write_still=True)
 
