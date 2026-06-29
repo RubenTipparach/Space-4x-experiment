@@ -5,7 +5,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { makePlanet, makeStar, makeNebula, type Planet } from './planet.ts';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
@@ -69,16 +68,13 @@ async function main() {
   // Light ships from the star itself (origin, in the orbital plane) so their sunlit side
   // matches the planets' terminator. A slight lift keeps decks from going fully flat
   // without breaking that consistency; low fill keeps the direction readable.
-  // Key light radiates from the star, so a ship's lit side faces the star (azimuth matches
-  // the planet terminators). A moderate height lets the decks read in the top-down view
-  // without the "lit purely from above" look that broke consistency before.
-  const sunLight = new THREE.PointLight(0xfff2d8, 4.0, 0, 0); // decay 0 → reaches the whole system
-  sunLight.position.set(0, 190, 0);
+  // Ships are lit EXACTLY like the planets: the star is a PointLight at the origin (in the
+  // orbital plane) plus a tiny ambient — and NOTHING else. No environment/IBL fill, because
+  // the planets have none; that fill was what made ships look flat and inconsistent.
+  const sunLight = new THREE.PointLight(0xfff2d8, 4.0, 0, 0); // decay 0 → constant across the system
+  sunLight.position.set(0, 0, 0);
   scene.add(sunLight);
-  scene.add(new THREE.AmbientLight(0x223044, 0.09));   // tiny fill so shadow sides aren't pure black
-  // neutral studio environment only so metal isn't pure black on the dark side (low intensity per-material)
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.add(new THREE.AmbientLight(0xb9c8e0, 0.12));   // matches the planets' ambient term
 
   // ---------- background: starfield + nebula dome ----------
   scene.background = new THREE.Color(0x05060c);
@@ -173,8 +169,6 @@ async function main() {
     hoverMeshes.push({ mesh: cluster, html: `<div class="t-name">${mt.name}</div><div class="t-tags">${RESOURCE_LABEL[res]}</div>` });
   }
 
-  // ---------- comets (highly eccentric Keplerian orbits, tails pointing away from the sun) ----------
-  const comets = buildComets(scene);
 
   // ---------- fleet (glTF ships) ----------
   const loader = new GLTFLoader();
@@ -189,14 +183,13 @@ async function main() {
       const box = new THREE.Box3().setFromObject(obj); const size = new THREE.Vector3(); box.getSize(size);
       const s = 24 / Math.max(size.x, size.y, size.z); obj.scale.setScalar(s);
       // Shade hulls diffusely (like the planets) so the star's direction reads: tame
-      // metalness, raise roughness, and keep environment reflections minimal.
+      // metalness and raise roughness (no environment map, so metal would read black).
       obj.traverse((o: any) => {
         if (!o.isMesh) return;
         for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
           if (!m) continue;
-          m.envMapIntensity = 0.1;
-          if (m.metalness !== undefined) m.metalness = Math.min(m.metalness, 0.2);
-          if (m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.6);
+          if (m.metalness !== undefined) m.metalness = Math.min(m.metalness, 0.15);
+          if (m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.65);
         }
       });
     } catch (e) {
@@ -298,7 +291,6 @@ async function main() {
     for (const s of spinners) { s.angle += s.speed * dt; s.group.position.set(s.parent.position.x + Math.cos(s.angle) * s.dist, 0, s.parent.position.z + Math.sin(s.angle) * s.dist); s.planet.update(dt, camera.position); }
     updateHQ(T); hq.position.copy(HQ); hq.rotation.y = T * 0.3;   // station orbits the home planet
 
-    for (const cm of comets) cm.update(dt);
 
     const pulse = 0.55 + 0.45 * Math.sin(T * 6);
     for (const s of ships) {
@@ -412,38 +404,4 @@ function buildStars(scene: THREE.Scene) {
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: 18, sizeAttenuation: true, vertexColors: true, transparent: true })));
-}
-
-interface Comet { update(dt: number): void; }
-function buildComets(scene: THREE.Scene): Comet[] {
-  const out: Comet[] = [];
-  const defs = [{ a: 760, e: 0.82, phi: 0.5, sp: 0.22, M: 0 }, { a: 1050, e: 0.88, phi: 2.4, sp: 0.16, M: 1.6 }];
-  for (const d of defs) {
-    const grp = new THREE.Group(); scene.add(grp);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(4, 16, 12), new THREE.MeshBasicMaterial({ color: 0xddfbff }));
-    grp.add(head);
-    const tail = new THREE.Mesh(new THREE.ConeGeometry(9, 70, 20, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0x8fd4ff, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }));
-    grp.add(tail);
-    let M = d.M;
-    out.push({
-      update(dt) {
-        M += d.sp * dt; let E = M;
-        for (let i = 0; i < 5; i++) E -= (E - d.e * Math.sin(E) - M) / (1 - d.e * Math.cos(E));
-        const a = d.a, b = a * Math.sqrt(1 - d.e * d.e);
-        const px = a * (Math.cos(E) - d.e), py = b * Math.sin(E);
-        const cs = Math.cos(d.phi), sn = Math.sin(d.phi);
-        const wx = px * cs - py * sn, wz = px * sn + py * cs;
-        grp.position.set(wx, 0, wz);
-        const away = new THREE.Vector3(wx, 0, wz).normalize();      // away from the sun (origin)
-        tail.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), away);
-        const r = Math.hypot(wx, wz);
-        const near = Math.max(0, 1 - (r - a * (1 - d.e)) / (a * 2 * d.e));   // longer/brighter near the sun
-        tail.scale.set(0.7 + near * 0.4, 0.5 + near * 1.1, 0.7 + near * 0.4);
-        tail.position.copy(away).multiplyScalar(35 * tail.scale.y);   // base near the head, streams outward
-        (tail.material as THREE.MeshBasicMaterial).opacity = 0.06 + 0.2 * near;
-      },
-    });
-  }
-  return out;
 }
