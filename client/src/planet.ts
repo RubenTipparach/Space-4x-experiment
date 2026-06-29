@@ -126,6 +126,37 @@ void main(){
 
 const SPHERE = new THREE.SphereGeometry(1, 56, 40);
 
+// Procedural deep-space skybox: 3D-simplex-noise nebula (seamless, no texture grid).
+const NEBULA_FRAG = NOISE + `
+varying vec3 vLocal;
+void main(){
+  vec3 d = normalize(vLocal);
+  float n1 = fbm(d*1.8);
+  float n2 = fbm(d*4.0 + 5.0);
+  float n3 = fbm(d*9.0 + 11.0);
+  float density = smoothstep(0.2, 0.95, n1*0.6 + n2*0.3 + n3*0.1);
+  float hue = fbm(d*1.2 + 20.0)*0.5 + 0.5;
+  vec3 c1 = vec3(0.13,0.05,0.23);   // purple
+  vec3 c2 = vec3(0.03,0.09,0.20);   // blue
+  vec3 c3 = vec3(0.20,0.06,0.15);   // magenta
+  vec3 neb = mix(c2, c1, hue);
+  neb = mix(neb, c3, smoothstep(0.6,1.0,hue));
+  vec3 base = vec3(0.012,0.016,0.035);
+  vec3 col = base + neb * density * 1.25;
+  // faint dust brightening in the densest knots
+  col += vec3(0.06,0.05,0.08) * smoothstep(0.8,1.0,density);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+export function makeNebula(): THREE.Mesh {
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(16000, 32, 24),
+    new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: NEBULA_FRAG, side: THREE.BackSide, depthWrite: false }),
+  );
+  m.renderOrder = -1;
+  return m;
+}
+
 export interface PlanetOpts { radius: number; color: number; gas: boolean; seed: number; }
 
 export interface Planet { group: THREE.Group; update(dt: number, camPos: THREE.Vector3): void; }
@@ -239,8 +270,8 @@ export function makeStar(radius: number): Star {
     });
     g.add(new THREE.Mesh(SPHERE, m)).scale.setScalar(radius * scale); coronas.push(m);
   };
-  shell(1.35, 2.2, 1.2, 0xffd89a);   // tight chromosphere
-  shell(2.6, 2.4, 0.8, 0xff9a4a);    // outer corona glow
+  shell(1.3, 2.4, 1.0, 0xffd89a);    // tight chromosphere
+  shell(1.85, 2.8, 0.6, 0xff9a4a);   // outer corona glow
 
   let t = 0;
   return {

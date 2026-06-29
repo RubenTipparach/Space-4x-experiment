@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { makePlanet, makeStar, type Planet } from './planet.ts';
+import { makePlanet, makeStar, makeNebula, type Planet } from './planet.ts';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
@@ -72,11 +72,11 @@ async function main() {
   // ---------- background: starfield + nebula dome ----------
   scene.background = new THREE.Color(0x05060c);
   buildStars(scene);
-  buildNebula(scene);
+  const nebula = makeNebula(); scene.add(nebula);   // shader skybox (3D-noise), follows the camera
   addPolarGrid(scene, 1450);
 
   // ---------- the star ----------
-  const star = makeStar(48);
+  const star = makeStar(30);
   scene.add(star.group);
 
   // ---------- planets / moons / gas nodes ----------
@@ -262,6 +262,7 @@ async function main() {
   function frame() {
     const dt = Math.min(0.05, clock.getDelta()); const T = clock.elapsedTime;
     controls.update();
+    nebula.position.copy(camera.position);   // keep the skybox infinitely far (no parallax)
     star.update(dt, camera.position);
 
     for (const o of orbiters) { o.angle += o.speed * dt; o.group.position.set(Math.cos(o.angle) * o.orbit, 0, Math.sin(o.angle) * o.orbit); o.planet.update(dt, camera.position); }
@@ -386,24 +387,6 @@ function buildStars(scene: THREE.Scene) {
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: 18, sizeAttenuation: true, vertexColors: true, transparent: true })));
-}
-
-function buildNebula(scene: THREE.Scene) {
-  const c = document.createElement('canvas'); c.width = c.height = 2048; const x = c.getContext('2d')!;
-  x.fillStyle = '#03040a'; x.fillRect(0, 0, 2048, 2048); x.globalCompositeOperation = 'lighter';
-  const cols = ['#3a1f7a', '#5a1f5a', '#143f63', '#1d2f6a', '#4a2a6a'];   // deep, desaturated
-  for (let i = 0; i < 60; i++) {
-    const cx = Math.random() * 2048, cy = Math.random() * 2048, r = 160 + Math.random() * 520;
-    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r); const col = cols[(Math.random() * cols.length) | 0];
-    g.addColorStop(0, col + '20'); g.addColorStop(0.5, col + '0c'); g.addColorStop(1, col + '00');
-    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill();
-  }
-  // faint star dust baked into the dome
-  for (let i = 0; i < 1200; i++) { x.fillStyle = `rgba(255,255,255,${Math.random() * 0.15})`; x.fillRect(Math.random() * 2048, Math.random() * 2048, 1, 1); }
-  const tex = new THREE.CanvasTexture(c);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(11000, 48, 32),
-    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, depthWrite: false, transparent: true, opacity: 0.55 }));
-  scene.add(dome);
 }
 
 interface Comet { update(dt: number): void; }
