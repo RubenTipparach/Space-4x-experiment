@@ -385,7 +385,10 @@ def _cam(objs, dir_vec, up):
 
 
 def frame(objs, yaw=0):  # top-down 3/4, rotated by yaw about Z
-    base = Vector((0.0, -0.5, 1.0))
+    # CAM_Y/CAM_Z tune the viewing elevation; defaults = original 3/4 hero.
+    # For the isometric scene (orbital plane squashed by S), match elevation so the
+    # ship's footprint squashes the same: set CAM_Y=-cos(asin(S)), CAM_Z=S.
+    base = Vector((0.0, float(os.environ.get("CAM_Y", "-0.5")), float(os.environ.get("CAM_Z", "1.0"))))
     _cam(objs, Matrix.Rotation(math.radians(yaw), 4, "Z") @ base, "Y")
 
 

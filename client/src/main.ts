@@ -1,359 +1,428 @@
-import { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+// Stellar Frontier — 3D vertical slice (Three.js). The solar system lives on the XZ
+// plane (Y up); the sun is at the origin and lights everything. Ships are real glTF
+// models lit live (no baked sprites). Planets are procedural shader spheres. The HTML
+// HUD (fleet bar, HQ stores, hint) is reused from the 2D slice.
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { makePlanet, makeStar, makeNebula, type Planet } from './planet.ts';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
 
 const BASE = import.meta.env.BASE_URL;
-const ANGLES = 24;
-const SHIP_SCALE = 0.16;
-const SHIP_SPEED = 150;      // world units / sec
-const MINE_RATE = 22;        // cargo units / sec
+const SHIP_SPEED = 150;
+const TURN_RATE = 4;
+const MINE_RATE = 22;
 const CARGO_CAP = 100;
-const HQ = { x: 70, y: -150 };
+const HQ = new THREE.Vector3(250, 0, -300);
+const SHIP_Y = 6;                  // hover height above the orbital plane
+const BELT_R = 505;                // belt sits in the gap between Bronce (420) and Halcyon (630)
 
-const frameUrl = (fid: string, idx: number) =>
-  `${BASE}sprites/${fid}_y${String(((idx % ANGLES) + ANGLES) % ANGLES * 15).padStart(3, '0')}.png`;
-
-// ---------- runtime types ----------
-interface MineTarget {
-  name: string; resource: ResourceTag; radius: number; node: Container;
-  pos(): { x: number; y: number };
-}
-type Vec = { x: number; y: number };
-
+type Vec = { x: number; z: number };
+interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): THREE.Vector3; }
 interface Ship {
-  def: typeof FACTIONS[number];
-  sprite: Sprite; frames: Texture[]; ring: Graphics;
-  pos: Vec; state: 'idle' | 'moving' | 'mining' | 'returning';
+  def: typeof FACTIONS[number]; obj: THREE.Object3D; disc: THREE.Mesh; beam: THREE.Mesh;
+  pos: Vec; heading: number; state: 'idle' | 'moving' | 'mining' | 'returning';
   moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null;
-  heading: number;
 }
 
 const resources: Record<ResourceTag, number> = {
   animals: 0, plants: 0, underwater: 0, minerals: 0, tourism: 0, ore: 0, crystal: 0, gas: 0,
 };
-
 const mineTargets: MineTarget[] = [];
 let ships: Ship[] = [];
 let selected = 0;
 
-// ---------- boot ----------
-// surface any startup error in the hint bar instead of failing silently
 const showErr = (m: string) => { const h = document.getElementById('hint'); if (h) h.textContent = m; };
 window.addEventListener('error', (e) => showErr('Error: ' + e.message));
 window.addEventListener('unhandledrejection', (e: any) => showErr('Error: ' + (e.reason?.message || e.reason)));
+const seedFor = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return (h % 1000) / 7.3; };
 
-// renderer preference: WebGL by default (universal); ?r=webgpu to opt in
-const pref = (new URLSearchParams(location.search).get('r') as 'webgl' | 'webgpu') || 'webgl';
-const app = new Application();
-await app.init({ background: 0x04060b, resizeTo: window, antialias: true, preference: pref });
-document.getElementById('game')!.appendChild(app.canvas);
+main().catch((err) => { showErr('Boot error: ' + (err?.message || err)); console.error(err); });
 
-// camera world container
-const world = new Container();
-app.stage.addChild(world);
+async function main() {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  document.getElementById('game')!.appendChild(renderer.domElement);
 
-// fullscreen background for pan / click-to-move
-const bg = new Graphics().rect(0, 0, 10, 10).fill({ color: 0x000000, alpha: 0.001 });
-bg.eventMode = 'static';
-app.stage.addChildAt(bg, 0);
-const sizeBg = () => bg.clear().rect(0, 0, app.screen.width, app.screen.height).fill({ color: 0x000000, alpha: 0.001 });
-sizeBg();
+  const scene = new THREE.Scene();
+  // narrow FOV + large distance → near-orthographic with a touch of perspective
+  const camera = new THREE.PerspectiveCamera(20, innerWidth / innerHeight, 1, 40000);
+  camera.position.set(0, 2600, 3350);
 
-// starfield (parallax-ish, in world space)
-const stars = new Graphics();
-for (let i = 0; i < 600; i++) {
-  const a = Math.random() * Math.PI * 2, r = 60 + Math.random() * 1400;
-  stars.circle(Math.cos(a) * r, Math.sin(a) * r, Math.random() * 1.4)
-    .fill({ color: 0xffffff, alpha: 0.06 + Math.random() * 0.22 });
-}
-world.addChild(stars);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  controls.enableRotate = false;             // fixed near-ortho angle, never rotates
+  controls.screenSpacePanning = false;       // left-drag pans across the orbital plane
+  controls.minDistance = 400; controls.maxDistance = 12000;
+  controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };   // mobile: drag to pan, pinch to zoom
 
-// central star
-const sun = new Graphics();
-sun.circle(0, 0, 120).fill({ color: 0xffd9a0, alpha: 0.06 });
-sun.circle(0, 0, 70).fill({ color: 0xffcf86, alpha: 0.12 });
-sun.circle(0, 0, 36).fill({ color: 0xfff0c8 });
-world.addChild(sun);
+  // ---------- lighting (for the glTF ships; planets self-shade in their shaders) ----------
+  const sunLight = new THREE.PointLight(0xfff0d0, 3.2, 0, 0); // decay 0 → reaches the whole system
+  scene.add(sunLight);                                        // at origin (the star)
+  scene.add(new THREE.HemisphereLight(0x6a82c0, 0x140c20, 0.6));
+  // neutral studio environment so metallic ship hulls reflect light instead of reading black
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-// ---------- build planets / moons / gas nodes ----------
-const tip = document.getElementById('tooltip')!;
-function hoverable(node: Container, html: string) {
-  node.eventMode = 'static'; node.cursor = 'pointer';
-  node.on('pointerover', () => { tip.innerHTML = html; tip.hidden = false; });
-  node.on('pointerout', () => { tip.hidden = true; });
-}
-function tagsHtml(tags: ResourceTag[]) {
-  return tags.map((t) => RESOURCE_LABEL[t]).join(', ');
-}
+  // ---------- background: starfield + nebula dome ----------
+  scene.background = new THREE.Color(0x05060c);
+  buildStars(scene);
+  const nebula = makeNebula(); scene.add(nebula);   // shader skybox (3D-noise), follows the camera
+  addPolarGrid(scene, 1450);
 
-interface Orbiter { c: Container; orbit: number; angle: number; speed: number; }
-const orbiters: Orbiter[] = [];
-interface Spinner { c: Container; parent: Container; dist: number; angle: number; speed: number; }
-const spinners: Spinner[] = [];
+  // ---------- the star ----------
+  const star = makeStar(30);
+  scene.add(star.group);
 
-for (const p of PLANETS) {
-  // orbit ring
-  world.addChild(new Graphics().circle(0, 0, p.orbit).stroke({ width: 1, color: 0x2a3a52, alpha: 0.5 }));
+  // ---------- planets / moons / gas nodes ----------
+  interface Orbiter { group: THREE.Group; planet: Planet; orbit: number; angle: number; speed: number; }
+  const orbiters: Orbiter[] = [];
+  interface Spinner { group: THREE.Group; planet: Planet; parent: THREE.Group; dist: number; angle: number; speed: number; }
+  const spinners: Spinner[] = [];
+  const hoverMeshes: { mesh: THREE.Object3D; html: string }[] = [];
+  const labels: { el: HTMLDivElement; obj: THREE.Object3D; off: number }[] = [];
 
-  const pc = new Container();
-  pc.x = Math.cos(p.angle0) * p.orbit; pc.y = Math.sin(p.angle0) * p.orbit;
-  world.addChild(pc);
-  orbiters.push({ c: pc, orbit: p.orbit, angle: p.angle0, speed: p.speed });
+  const mkLabel = (text: string, obj: THREE.Object3D, off: number, cls = 'world-label') => {
+    const el = document.createElement('div'); el.className = cls; el.textContent = text;
+    document.body.appendChild(el); labels.push({ el, obj, off });
+  };
 
-  const body = new Graphics();
-  if (p.type === 'gas') body.circle(0, 0, p.size + 6).fill({ color: p.color, alpha: 0.18 });
-  body.circle(0, 0, p.size).fill({ color: p.color });
-  body.circle(-p.size * 0.3, -p.size * 0.3, p.size * 0.55).fill({ color: 0xffffff, alpha: 0.08 });
-  pc.addChild(body);
+  for (const p of PLANETS) {
+    addOrbitRing(scene, p.orbit);
+    const pl = makePlanet({ radius: p.size, color: p.color, gas: p.type === 'gas', seed: seedFor(p.name) });
+    const g = pl.group;
+    g.position.set(Math.cos(p.angle0) * p.orbit, 0, Math.sin(p.angle0) * p.orbit);
+    scene.add(g);
+    orbiters.push({ group: g, planet: pl, orbit: p.orbit, angle: p.angle0, speed: p.speed });
+    if (p.type === 'gas') addRings(g, p.size, p.color);
+    mkLabel(p.name, g, p.size + 12);
+    hoverMeshes.push({ mesh: g, html: `<div class="t-name">${p.name}${p.type === 'gas' ? ' (gas giant)' : ''}</div><div class="t-tags">${p.tags.map((t) => RESOURCE_LABEL[t]).join(', ')}</div>` });
 
-  const label = new Text({ text: p.name, style: { fill: 0xc9d4e3, fontSize: 12, fontFamily: 'Segoe UI' } });
-  label.anchor.set(0.5, 0); label.y = p.size + 6; pc.addChild(label);
-
-  // resource tag dots under the name
-  p.tags.forEach((t, i) => {
-    const dot = new Graphics().circle(0, 0, 3).fill({ color: RES_COLOR[t] });
-    dot.x = (i - (p.tags.length - 1) / 2) * 9; dot.y = p.size + 22; pc.addChild(dot);
-  });
-
-  const tagText = `<div class="t-name">${p.name}${p.type === 'gas' ? ' (gas giant)' : ''}</div>` +
-    `<div class="t-tags">${tagsHtml(p.tags)}</div>`;
-  hoverable(body, tagText);
-
-  if (p.type === 'gas') {
-    // atmosphere mining nodes (Lagrange points) — the mineable gas spots
-    for (let n = 0; n < GAS_NODES; n++) {
-      const nc = new Container();
-      const na = (n / GAS_NODES) * Math.PI * 2;
-      const nd = p.size + 26;
-      nc.x = Math.cos(na) * nd; nc.y = Math.sin(na) * nd;
-      const g = new Graphics().circle(0, 0, 6).fill({ color: RES_COLOR.gas })
-        .circle(0, 0, 10).stroke({ width: 1.5, color: RES_COLOR.gas, alpha: 0.5 });
-      nc.addChild(g); pc.addChild(nc);
-      const mt: MineTarget = {
-        name: `${p.name} node ${n + 1}`, resource: 'gas', radius: 12, node: nc,
-        pos: () => worldPos(nc),
-      };
-      mineTargets.push(mt);
-      hoverable(g, `<div class="t-name">${mt.name}</div><div class="t-tags">gas</div>`);
-      bindMine(g, mt);
+    if (p.type === 'gas') {
+      for (let n = 0; n < GAS_NODES; n++) {
+        const na = (n / GAS_NODES) * Math.PI * 2, nd = p.size + 26;
+        const node = new THREE.Mesh(
+          new THREE.SphereGeometry(5, 16, 12),
+          new THREE.MeshBasicMaterial({ color: RES_COLOR.gas }));
+        node.position.set(Math.cos(na) * nd, 0, Math.sin(na) * nd);
+        g.add(node);
+        const mt: MineTarget = { name: `${p.name} node ${n + 1}`, resource: 'gas', radius: 12, pos: () => node.getWorldPosition(new THREE.Vector3()) };
+        mineTargets.push(mt);
+        hoverMeshes.push({ mesh: node, html: `<div class="t-name">${mt.name}</div><div class="t-tags">gas</div>` });
+        (node.userData as any).mine = mt;
+      }
+    } else {
+      const mt: MineTarget = { name: p.name, resource: p.primary, radius: p.size + 8, pos: () => g.getWorldPosition(new THREE.Vector3()) };
+      mineTargets.push(mt); (g.userData as any).mine = mt;
     }
-  } else {
-    // rocky planet is itself a mine target for its primary resource
-    const mt: MineTarget = { name: p.name, resource: p.primary, radius: p.size + 6, node: pc, pos: () => worldPos(pc) };
-    mineTargets.push(mt); bindMine(body, mt);
+
+    for (const m of (p.moons ?? [])) {
+      const ml = makePlanet({ radius: m.size, color: 0xc2c8d2, gas: false, seed: seedFor(m.name) });
+      const mg = ml.group;
+      mg.position.set(g.position.x + Math.cos(m.angle0) * m.dist, 0, g.position.z + Math.sin(m.angle0) * m.dist);
+      scene.add(mg);
+      spinners.push({ group: mg, planet: ml, parent: g, dist: m.dist, angle: m.angle0, speed: m.speed });
+      const mt: MineTarget = { name: m.name, resource: m.resource, radius: m.size + 6, pos: () => mg.getWorldPosition(new THREE.Vector3()) };
+      mineTargets.push(mt); (mg.userData as any).mine = mt;
+      hoverMeshes.push({ mesh: mg, html: `<div class="t-name">${m.name} (moon)</div><div class="t-tags">${RESOURCE_LABEL[m.resource]}</div>` });
+    }
   }
 
-  // moons
-  for (const m of (p.moons ?? [])) {
-    world.addChild; // (orbit drawn implicitly small)
-    const mc = new Container();
-    mc.x = pc.x + Math.cos(m.angle0) * m.dist; mc.y = pc.y + Math.sin(m.angle0) * m.dist;
-    world.addChild(mc);
-    spinners.push({ c: mc, parent: pc, dist: m.dist, angle: m.angle0, speed: m.speed });
-    const mb = new Graphics().circle(0, 0, m.size).fill({ color: 0xbfc6d0 })
-      .circle(0, 0, 3).fill({ color: RES_COLOR[m.resource] });
-    mc.addChild(mb);
-    const mt: MineTarget = { name: m.name, resource: m.resource, radius: m.size + 5, node: mc, pos: () => worldPos(mc) };
-    mineTargets.push(mt);
-    hoverable(mb, `<div class="t-name">${m.name} (moon)</div><div class="t-tags">${RESOURCE_LABEL[m.resource]}</div>`);
-    bindMine(mb, mt);
+  // ---------- HQ ----------
+  const hq = new THREE.Group(); hq.position.copy(HQ); scene.add(hq);
+  const hqMesh = new THREE.Mesh(new THREE.OctahedronGeometry(14),
+    new THREE.MeshStandardMaterial({ color: 0x9fd6ff, emissive: 0x2a6ea0, emissiveIntensity: 0.6, metalness: 0.6, roughness: 0.3 }));
+  hq.add(hqMesh);
+  hq.add(new THREE.Mesh(new THREE.TorusGeometry(22, 1.2, 8, 48),
+    new THREE.MeshBasicMaterial({ color: 0x5ec8ff }))).rotation.x = Math.PI / 2;
+  mkLabel('HQ', hq, 26, 'world-label hq');
+
+  // ---------- asteroid belt (in the clear gap between Bronce and the gas giants) ----------
+  addBelt(scene);
+  for (const [frac, res] of [[0.2, 'ore'], [0.65, 'crystal']] as const) {
+    const a = frac * Math.PI * 2, r = BELT_R;
+    const cluster = new THREE.Mesh(new THREE.IcosahedronGeometry(9, 0),
+      new THREE.MeshStandardMaterial({ color: res === 'ore' ? 0xb98a5a : 0x9be8ff, emissive: res === 'ore' ? 0x3a2a14 : 0x184a55, roughness: 0.8, metalness: 0.2, flatShading: true }));
+    cluster.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); scene.add(cluster);
+    const mt: MineTarget = { name: res === 'ore' ? 'Ore Field' : 'Crystal Field', resource: res, radius: 16, pos: () => cluster.position.clone() };
+    mineTargets.push(mt); (cluster.userData as any).mine = mt;
+    hoverMeshes.push({ mesh: cluster, html: `<div class="t-name">${mt.name}</div><div class="t-tags">${RESOURCE_LABEL[res]}</div>` });
   }
-}
 
-function worldPos(c: Container): Vec { const p = c.getGlobalPosition(); const l = world.toLocal(p); return { x: l.x, y: l.y }; }
+  // ---------- comets (highly eccentric Keplerian orbits, tails pointing away from the sun) ----------
+  const comets = buildComets(scene);
 
-// HQ station
-const hq = new Container(); hq.x = HQ.x; hq.y = HQ.y; world.addChild(hq);
-const hqg = new Graphics()
-  .circle(0, 0, 16).stroke({ width: 2, color: 0x5ec8ff, alpha: 0.7 })
-  .poly([0, -10, 9, 0, 0, 10, -9, 0]).fill({ color: 0x9fd6ff })
-  .circle(0, 0, 3).fill({ color: 0x04060b });
-hq.addChild(hqg);
-const hqLabel = new Text({ text: 'HQ', style: { fill: 0x9fd6ff, fontSize: 12, fontFamily: 'Segoe UI', fontWeight: '600' } });
-hqLabel.anchor.set(0.5, 0); hqLabel.y = 20; hq.addChild(hqLabel);
-hoverable(hqg, '<div class="t-name">Headquarters</div><div class="t-tags">deposit point</div>');
+  // ---------- fleet (glTF ships) ----------
+  const loader = new GLTFLoader();
+  const discGeo = new THREE.RingGeometry(16, 19, 48);
+  const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
+  await Promise.all(FACTIONS.map(async (def, i) => {
+    let obj: THREE.Object3D;
+    try {
+      const gltf = await loader.loadAsync(`${BASE}models/${def.id}.glb`);
+      obj = gltf.scene;
+      // normalize size: scale longest bbox axis to ~24 units
+      const box = new THREE.Box3().setFromObject(obj); const size = new THREE.Vector3(); box.getSize(size);
+      const s = 24 / Math.max(size.x, size.y, size.z); obj.scale.setScalar(s);
+      obj.traverse((o: any) => { if (o.isMesh && o.material) { o.material.envMapIntensity = 0.9; } });
+    } catch (e) {
+      obj = new THREE.Mesh(new THREE.ConeGeometry(6, 18, 6), new THREE.MeshStandardMaterial({ color: def.color }));
+      console.error('ship load', def.id, e);
+    }
+    const holder = new THREE.Group(); holder.add(obj);
+    const start = { x: HQ.x + (i - 3.5) * 34, z: HQ.z + (i % 2 ? 26 : 54) };
+    holder.position.set(start.x, SHIP_Y, start.z); scene.add(holder);
+    (holder.userData as any).shipIndex = i;
 
-// ---------- mine binding ----------
-function bindMine(obj: Container, mt: MineTarget) {
-  obj.eventMode = 'static'; obj.cursor = 'pointer';
-  obj.on('pointertap', (e) => {
-    e.stopPropagation();
+    const disc = new THREE.Mesh(discGeo, new THREE.MeshBasicMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+    disc.rotation.x = -Math.PI / 2; disc.position.set(start.x, 1, start.z); disc.visible = false; scene.add(disc);
+    const beam = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
+    beam.visible = false; scene.add(beam);
+
+    ships[i] = { def, obj: holder, disc, beam, pos: { ...start }, heading: 0, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null };
+  }));
+
+  // ---------- raycasting: select ships / move / mine ----------
+  const ray = new THREE.Raycaster();
+  const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const ndc = new THREE.Vector2();
+  let downX = 0, downY = 0;
+  renderer.domElement.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; });
+  renderer.domElement.addEventListener('pointerup', (e) => {
+    if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6) return;   // was a camera drag
+    ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    // 1) ship?
+    const shipHits = ray.intersectObjects(ships.map((s) => s.obj), true);
+    if (shipHits.length) { let o: THREE.Object3D | null = shipHits[0].object; while (o && (o.userData as any).shipIndex === undefined) o = o.parent; if (o) { selectShip((o.userData as any).shipIndex); return; } }
+    // 2) mine target?
+    const mineHits = ray.intersectObjects(mineTargets.length ? hoverMeshes.map((h) => h.mesh) : [], true);
+    let mh: THREE.Object3D | null = mineHits[0]?.object ?? null;
+    while (mh && !(mh.userData as any).mine) mh = mh.parent;
     const s = ships[selected];
-    if (!s) return;
-    s.mine = mt; s.moveTo = null; s.state = 'moving';
-    flashHint(`${s.def.name} → mining ${mt.name} (${RESOURCE_LABEL[mt.resource]})`);
+    if (mh && (mh.userData as any).mine && s) { s.mine = (mh.userData as any).mine; s.moveTo = null; s.state = 'moving'; flashHint(`${s.def.name} → mining ${s.mine!.name}`); return; }
+    // 3) empty space → move on the plane
+    const hit = new THREE.Vector3();
+    if (s && ray.ray.intersectPlane(ground, hit)) { s.moveTo = { x: hit.x, z: hit.z }; s.mine = null; s.state = 'moving'; flashHint(`${s.def.name} → moving`); }
   });
-}
 
-// ---------- fleet ----------
-// Lazy textures (Texture.from loads each frame on demand and updates the sprite when
-// ready) — so the scene/camera/toolbar never block on a bulk asset load.
-function buildFleet() {
-  ships = FACTIONS.map((def, i) => {
-    const frames = Array.from({ length: ANGLES }, (_, k) => Texture.from(frameUrl(def.id, k)));
-    const sprite = new Sprite(frames[0]); sprite.anchor.set(0.5); sprite.scale.set(SHIP_SCALE);
-    const ring = new Graphics().circle(0, 0, 26).stroke({ width: 2, color: 0x5ec8ff, alpha: 0.9 });
-    ring.visible = false;
-    const sc = new Container();
-    const start: Vec = { x: HQ.x + (i - 3.5) * 10, y: HQ.y + 30 };
-    sc.x = start.x; sc.y = start.y; sc.addChild(ring, sprite); world.addChild(sc);
-    (sprite as any)._sc = sc;
-    return {
-      def, sprite, frames, ring, pos: { ...start }, state: 'idle' as const,
-      moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0,
-    };
+  // ---------- HUD ----------
+  const tip = document.getElementById('tooltip')!;
+  const hintEl = document.getElementById('hint')!;
+  const resEl = document.getElementById('resources')!;
+  const fleetEl = document.getElementById('fleet')!;
+  const recallBtn = document.createElement('button'); recallBtn.className = 'recall'; recallBtn.textContent = 'Recall ship';
+  document.body.appendChild(recallBtn);
+  recallBtn.onclick = () => { const s = ships[selected]; if (!s) return; s.mine = null; s.moveTo = { x: HQ.x, z: HQ.z }; s.state = 'returning'; flashHint(`${s.def.name} → recalled to HQ`); };
+  let hintTimer = 0;
+  const DEFAULT_HINT = 'Drag to orbit · scroll to zoom · click a ship to select, then click a planet/node to mine or empty space to move.';
+  function flashHint(m: string) { hintEl.textContent = m; hintTimer = 3; }
+  function selectShip(i: number) { selected = i; [...fleetEl.children].forEach((c, j) => c.classList.toggle('selected', j === selected)); const s = ships[i]; if (s) flashHint(`${s.def.name} selected`); }
+  function buildToolbar() {
+    fleetEl.innerHTML = '';
+    ships.forEach((s, i) => {
+      const b = document.createElement('div'); b.className = 'ship-btn' + (i === selected ? ' selected' : '');
+      b.innerHTML = `<img src="${BASE}sprites/${s.def.id}_y000.png" alt=""><div class="s-name">${s.def.name}</div><div class="s-stat" data-i="${i}">idle</div>`;
+      b.onclick = () => selectShip(i); fleetEl.appendChild(b);
+    });
+  }
+  function updateHud() {
+    [...fleetEl.querySelectorAll('.s-stat')].forEach((el) => {
+      const i = +(el as HTMLElement).dataset.i!; const s = ships[i]; if (!s) return;
+      el.className = 's-stat ' + (s.state === 'mining' ? 'mining' : s.state === 'returning' ? 'returning' : s.state === 'moving' ? 'moving' : '');
+      el.textContent = s.state === 'mining' ? `mining ${Math.round(s.cargo)}%` : s.state;
+    });
+    resEl.innerHTML = `<h3>HQ Stores</h3>` + (Object.keys(resources) as ResourceTag[])
+      .map((k) => `<div class="res-row"><span class="k">${RESOURCE_LABEL[k]}</span><span class="v">${Math.floor(resources[k])}</span></div>`).join('');
+    recallBtn.disabled = !ships[selected];
+  }
+  window.addEventListener('pointermove', (e) => {
+    tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px';
+    ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hits = ray.intersectObjects(hoverMeshes.map((h) => h.mesh), true);
+    if (hits.length) { let o: THREE.Object3D | null = hits[0].object; const found = hoverMeshes.find((h) => { let x: THREE.Object3D | null = o; while (x) { if (x === h.mesh) return true; x = x.parent; } return false; }); if (found) { tip.innerHTML = found.html; tip.hidden = false; return; } }
+    tip.hidden = true;
   });
-  buildToolbar();
-}
 
-// ---------- input: background pan + click-to-move ----------
-let down = false, moved = false, sx = 0, sy = 0, lastX = 0, lastY = 0;
-bg.on('pointerdown', (e) => { down = true; moved = false; sx = lastX = e.global.x; sy = lastY = e.global.y; });
-bg.on('pointermove', (e) => {
-  if (!down) return;
-  const dx = e.global.x - lastX, dy = e.global.y - lastY;
-  if (Math.abs(e.global.x - sx) + Math.abs(e.global.y - sy) > 6) moved = true;
-  if (moved) { world.x += dx; world.y += dy; }
-  lastX = e.global.x; lastY = e.global.y;
-});
-bg.on('pointerup', (e) => {
-  down = false;
-  if (moved) return;                    // was a pan, not a click
-  const s = ships[selected]; if (!s) return;
-  const p = world.toLocal(e.global);
-  s.moveTo = { x: p.x, y: p.y }; s.mine = null; s.state = 'moving';
-  flashHint(`${s.def.name} → moving`);
-});
-app.canvas.addEventListener('wheel', (ev) => {
-  ev.preventDefault();
-  const f = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-  const before = world.toLocal({ x: ev.offsetX, y: ev.offsetY } as any);
-  world.scale.x = world.scale.y = Math.min(2.2, Math.max(0.25, world.scale.x * f));
-  const after = world.toLocal({ x: ev.offsetX, y: ev.offsetY } as any);
-  world.x += (after.x - before.x) * world.scale.x;
-  world.y += (after.y - before.y) * world.scale.y;
-}, { passive: false });
-
-window.addEventListener('resize', sizeBg);
-
-// fit camera to system
-function fitCamera() {
-  const s = Math.min(app.screen.width, app.screen.height) / 2520;
-  world.scale.set(s);
-  world.x = app.screen.width / 2; world.y = app.screen.height / 2;
-}
-
-// ---------- DOM HUD ----------
-const fleetEl = document.getElementById('fleet')!;
-const resEl = document.getElementById('resources')!;
-const hintEl = document.getElementById('hint')!;
-const recallBtn = document.createElement('button');
-recallBtn.className = 'recall'; recallBtn.textContent = 'Recall ship'; document.body.appendChild(recallBtn);
-recallBtn.onclick = () => {
-  const s = ships[selected]; if (!s) return;
-  s.mine = null; s.moveTo = { ...HQ }; s.state = 'returning';
-  flashHint(`${s.def.name} → recalled to HQ`);
-};
-
-let hintTimer = 0;
-function flashHint(msg: string) { hintEl.textContent = msg; hintTimer = 3; }
-
-function buildToolbar() {
-  fleetEl.innerHTML = '';
-  ships.forEach((s, i) => {
-    const b = document.createElement('div');
-    b.className = 'ship-btn' + (i === selected ? ' selected' : '');
-    b.innerHTML = `<img src="${frameUrl(s.def.id, 0)}" alt=""><div class="s-name">${s.def.name}</div><div class="s-stat" data-i="${i}">idle</div>`;
-    b.onclick = () => { selected = i; refreshToolbarSelection(); };
-    fleetEl.appendChild(b);
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
   });
-}
-function refreshToolbarSelection() {
-  [...fleetEl.children].forEach((c, i) => c.classList.toggle('selected', i === selected));
-}
-function updateHud() {
-  // statuses
-  [...fleetEl.querySelectorAll('.s-stat')].forEach((el) => {
-    const i = +(el as HTMLElement).dataset.i!; const s = ships[i];
-    const cls = s.state === 'mining' ? 'mining' : s.state === 'returning' ? 'returning' : s.state === 'moving' ? 'moving' : '';
-    el.className = 's-stat ' + cls;
-    el.textContent = s.state === 'mining' ? `mining ${Math.round(s.cargo)}%`
-      : s.state === 'returning' ? 'returning' : s.state === 'moving' ? 'moving' : 'idle';
-  });
-  // resources
-  const rows = (Object.keys(resources) as ResourceTag[])
-    .map((k) => `<div class="res-row"><span class="k">${RESOURCE_LABEL[k]}</span><span class="v">${Math.floor(resources[k])}</span></div>`)
-    .join('');
-  resEl.innerHTML = `<h3>HQ Stores</h3>${rows}`;
-  recallBtn.disabled = !ships[selected];
-}
 
-// tooltip follow
-window.addEventListener('pointermove', (e) => { tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px'; });
+  // ---------- loop ----------
+  const clock = new THREE.Clock();
+  const tmp = new THREE.Vector3();
+  let hudAcc = 0;
+  function frame() {
+    const dt = Math.min(0.05, clock.getDelta()); const T = clock.elapsedTime;
+    controls.update();
+    nebula.position.copy(camera.position);   // keep the skybox infinitely far (no parallax)
+    star.update(dt, camera.position);
 
-// ---------- game loop ----------
-function step(dt: number) {
-  // orbits
-  for (const o of orbiters) { o.angle += o.speed * dt; o.c.x = Math.cos(o.angle) * o.orbit; o.c.y = Math.sin(o.angle) * o.orbit; }
-  for (const s of spinners) { s.angle += s.speed * dt; s.c.x = s.parent.x + Math.cos(s.angle) * s.dist; s.c.y = s.parent.y + Math.sin(s.angle) * s.dist; }
+    for (const o of orbiters) { o.angle += o.speed * dt; o.group.position.set(Math.cos(o.angle) * o.orbit, 0, Math.sin(o.angle) * o.orbit); o.planet.update(dt, camera.position); }
+    for (const s of spinners) { s.angle += s.speed * dt; s.group.position.set(s.parent.position.x + Math.cos(s.angle) * s.dist, 0, s.parent.position.z + Math.sin(s.angle) * s.dist); s.planet.update(dt, camera.position); }
 
-  for (const s of ships) {
-    const sc = (s.sprite as any)._sc as Container;
-    let dest: Vec | null = null;
-    if (s.state === 'moving') dest = s.mine ? s.mine.pos() : s.moveTo;
-    else if (s.state === 'returning') dest = { ...HQ };
-    else if (s.state === 'mining' && s.mine) {
-      // stay attached to (possibly moving) target while mining
-      dest = s.mine.pos();
-    }
+    for (const cm of comets) cm.update(dt);
 
-    if (dest) {
-      const dx = dest.x - s.pos.x, dy = dest.y - s.pos.y;
-      const d = Math.hypot(dx, dy);
-      const arriveR = (s.state === 'mining') ? (s.mine!.radius + 14)
-        : s.mine ? s.mine.radius + 14 : (s.state === 'returning' ? 22 : 4);
-      if (d > arriveR) {
-        const v = SHIP_SPEED * dt;
-        const k = Math.min(1, v / d);
-        s.pos.x += dx * k; s.pos.y += dy * k;
-        s.heading = Math.atan2(dx, -dy);
+    const pulse = 0.55 + 0.45 * Math.sin(T * 6);
+    for (const s of ships) {
+      if (!s) continue;
+      let desired = s.heading;
+      s.beam.visible = false;
+      if (s.state === 'mining' && s.mine) {
+        const bp = s.mine.pos(); const d = new THREE.Vector2(s.pos.x - bp.x, s.pos.z - bp.z); const len = d.length() || 1;
+        const rad = s.mine.radius + 16; const k = 1 - Math.exp(-9 * dt);
+        s.pos.x += (bp.x + d.x / len * rad - s.pos.x) * k; s.pos.z += (bp.z + d.y / len * rad - s.pos.z) * k;
+        desired = Math.atan2(bp.x - s.pos.x, bp.z - s.pos.z);
+        s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP, s.cargo + MINE_RATE * dt);
+        if (s.cargo >= CARGO_CAP) s.state = 'returning';
+        drawBeam(s, bp, pulse);
       } else {
-        // arrived
-        if (s.state === 'moving') s.state = s.mine ? 'mining' : 'idle';
-        else if (s.state === 'returning') {
-          if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; }
-          s.state = 'idle'; s.moveTo = null;
+        const dest: Vec | null = s.state === 'returning' ? { x: HQ.x, z: HQ.z } : s.state === 'moving' ? (s.mine ? vecOf(s.mine.pos()) : s.moveTo) : null;
+        if (dest) {
+          const dx = dest.x - s.pos.x, dz = dest.z - s.pos.z, dd = Math.hypot(dx, dz);
+          const arriveR = s.mine ? s.mine.radius + 16 : (s.state === 'returning' ? 22 : 6);
+          if (dd > arriveR) { const k = Math.min(1, SHIP_SPEED * dt / dd); s.pos.x += dx * k; s.pos.z += dz * k; desired = Math.atan2(dx, dz); }
+          else if (s.state === 'moving') s.state = s.mine ? 'mining' : 'idle';
+          else if (s.state === 'returning') { if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; } s.state = 'idle'; s.moveTo = null; }
         }
       }
+      if (s.state === 'idle' && s.mine && s.cargo === 0) s.state = 'moving';
+      // smooth turn (glTF nose = -Z after Y-up export → face heading about Y)
+      s.heading += Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, angWrap(desired - s.heading)));
+      // glTF nose points -Z; heading is atan2(dx,dz) → rotate so the nose follows velocity
+      s.obj.position.set(s.pos.x, SHIP_Y, s.pos.z); s.obj.rotation.y = s.heading + Math.PI;
+      s.disc.visible = ships[selected] === s;
+      if (s.disc.visible) { s.disc.position.set(s.pos.x, 1, s.pos.z); (s.disc.material as THREE.MeshBasicMaterial).opacity = 0.6 + 0.4 * pulse; }
     }
 
-    if (s.state === 'mining' && s.mine) {
-      s.cargoRes = s.mine.resource;
-      s.cargo = Math.min(CARGO_CAP, s.cargo + MINE_RATE * dt);
-      if (s.cargo >= CARGO_CAP) s.state = 'returning';   // full -> haul to HQ (mine remembered to resume)
+    // billboard HTML labels
+    for (const L of labels) {
+      L.obj.getWorldPosition(tmp); tmp.y += L.off; tmp.project(camera);
+      const vis = tmp.z < 1;
+      L.el.style.display = vis ? 'block' : 'none';
+      if (vis) { L.el.style.left = (tmp.x * 0.5 + 0.5) * innerWidth + 'px'; L.el.style.top = (-tmp.y * 0.5 + 0.5) * innerHeight + 'px'; }
     }
-    // resume mining after depositing
-    if (s.state === 'idle' && s.mine && s.cargo === 0) s.state = 'moving';
 
-    // facing frame
-    const idx = Math.round((s.heading * 180 / Math.PI) / 15);
-    s.sprite.texture = s.frames[((idx % ANGLES) + ANGLES) % ANGLES];
-    sc.x = s.pos.x; sc.y = s.pos.y;
-    s.ring.visible = (ships[selected] === s);
+    hudAcc += dt; if (hudAcc > 0.15) { updateHud(); hudAcc = 0; }
+    if (hintTimer > 0) { hintTimer -= dt; if (hintTimer <= 0) hintEl.textContent = DEFAULT_HINT; }
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  hintEl.textContent = DEFAULT_HINT;
+  buildToolbar();
+  updateHud();
+  frame();
+  (window as any).__game = { ships, mineTargets, scene, camera, controls };
+  (window as any).__ready = true;
+
+  // ---- helpers that need beam geometry ----
+  function drawBeam(s: Ship, bp: THREE.Vector3, pulse: number) {
+    const a = new THREE.Vector3(s.pos.x, SHIP_Y, s.pos.z); const b = bp.clone();
+    const mid = a.clone().add(b).multiplyScalar(0.5); const len = a.distanceTo(b);
+    s.beam.position.copy(mid); s.beam.scale.set(1.2, len, 1.2);
+    s.beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    (s.beam.material as THREE.MeshBasicMaterial).color.setHex(RES_COLOR[s.mine!.resource]);
+    (s.beam.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.35 * pulse;
+    s.beam.visible = true;
   }
 }
 
-let hudAcc = 0;
-app.ticker.add((t) => {
-  const dt = Math.min(0.05, t.deltaMS / 1000);
-  step(dt);
-  hudAcc += dt; if (hudAcc > 0.15) { updateHud(); hudAcc = 0; }
-  if (hintTimer > 0) { hintTimer -= dt; if (hintTimer <= 0) hintEl.textContent = 'Click a ship in the fleet bar, then click a planet/moon/gas node to mine, or empty space to move.'; }
-});
+const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+const vecOf = (v: THREE.Vector3): Vec => ({ x: v.x, z: v.z });
 
-buildFleet();
-fitCamera();
-updateHud();
-window.addEventListener('resize', fitCamera);
-(window as any).__ready = true;
+function addPolarGrid(scene: THREE.Scene, maxR: number) {
+  const pts: number[] = [];
+  for (let r = 200; r <= maxR; r += 200) {            // concentric rings
+    let px = r, pz = 0;
+    for (let i = 1; i <= 120; i++) { const a = (i / 120) * Math.PI * 2; const x = Math.cos(a) * r, z = Math.sin(a) * r; pts.push(px, 0, pz, x, 0, z); px = x; pz = z; }
+  }
+  for (let s = 0; s < 24; s++) { const a = (s / 24) * Math.PI * 2; pts.push(0, 0, 0, Math.cos(a) * maxR, 0, Math.sin(a) * maxR); }   // radial spokes
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x35507a, transparent: true, opacity: 0.22 })));
+}
+
+function addOrbitRing(scene: THREE.Scene, r: number) {
+  const seg = 128; const pts: THREE.Vector3[] = [];
+  for (let i = 0; i <= seg; i++) { const a = (i / seg) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)); }
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x2a3c54, transparent: true, opacity: 0.5 }));
+  scene.add(line);
+}
+
+function addRings(g: THREE.Group, size: number, color: number) {
+  const ring = new THREE.Mesh(new THREE.RingGeometry(size * 1.4, size * 2.2, 80),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2 + 0.35; g.add(ring);
+}
+
+function addBelt(scene: THREE.Scene) {
+  const N = 700; const geo = new THREE.DodecahedronGeometry(1, 0);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x6b6256, roughness: 0.95, flatShading: true });
+  const mesh = new THREE.InstancedMesh(geo, mat, N); const m = new THREE.Matrix4(); const q = new THREE.Quaternion();
+  for (let i = 0; i < N; i++) {
+    const a = Math.random() * Math.PI * 2; const r = BELT_R + (Math.random() - 0.5) * 90;
+    const s = 1 + Math.random() * 3;
+    q.setFromEuler(new THREE.Euler(Math.random() * 6, Math.random() * 6, Math.random() * 6));
+    m.compose(new THREE.Vector3(Math.cos(a) * r, (Math.random() - 0.5) * 10, Math.sin(a) * r), q, new THREE.Vector3(s, s, s));
+    mesh.setMatrixAt(i, m);
+  }
+  scene.add(mesh);
+}
+
+function buildStars(scene: THREE.Scene) {
+  const N = 3500; const pos = new Float32Array(N * 3); const col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(8000 + Math.random() * 4000);
+    pos.set([v.x, v.y, v.z], i * 3);
+    const t = Math.random(); const c = new THREE.Color().setHSL(0.6, 0.3, 0.6 + t * 0.4);
+    if (Math.random() < 0.1) c.setHSL(0.08, 0.5, 0.7);
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: 18, sizeAttenuation: true, vertexColors: true, transparent: true })));
+}
+
+interface Comet { update(dt: number): void; }
+function buildComets(scene: THREE.Scene): Comet[] {
+  const out: Comet[] = [];
+  const defs = [{ a: 760, e: 0.82, phi: 0.5, sp: 0.22, M: 0 }, { a: 1050, e: 0.88, phi: 2.4, sp: 0.16, M: 1.6 }];
+  for (const d of defs) {
+    const grp = new THREE.Group(); scene.add(grp);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(4, 16, 12), new THREE.MeshBasicMaterial({ color: 0xddfbff }));
+    grp.add(head);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(9, 70, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x8fd4ff, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }));
+    grp.add(tail);
+    let M = d.M;
+    out.push({
+      update(dt) {
+        M += d.sp * dt; let E = M;
+        for (let i = 0; i < 5; i++) E -= (E - d.e * Math.sin(E) - M) / (1 - d.e * Math.cos(E));
+        const a = d.a, b = a * Math.sqrt(1 - d.e * d.e);
+        const px = a * (Math.cos(E) - d.e), py = b * Math.sin(E);
+        const cs = Math.cos(d.phi), sn = Math.sin(d.phi);
+        const wx = px * cs - py * sn, wz = px * sn + py * cs;
+        grp.position.set(wx, 0, wz);
+        const away = new THREE.Vector3(wx, 0, wz).normalize();      // away from the sun (origin)
+        tail.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), away);
+        const r = Math.hypot(wx, wz);
+        const near = Math.max(0, 1 - (r - a * (1 - d.e)) / (a * 2 * d.e));   // longer/brighter near the sun
+        tail.scale.set(0.7 + near * 0.4, 0.5 + near * 1.1, 0.7 + near * 0.4);
+        tail.position.copy(away).multiplyScalar(35 * tail.scale.y);   // base near the head, streams outward
+        (tail.material as THREE.MeshBasicMaterial).opacity = 0.06 + 0.2 * near;
+      },
+    });
+  }
+  return out;
+}

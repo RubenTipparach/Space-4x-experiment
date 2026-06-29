@@ -65,3 +65,11 @@ canvas { display: block; }
 }
 .recall:hover { border-color: rgba(120,150,190,.5); }
 .recall:disabled { opacity: .4; cursor: default; }
+
+/* 3D world-space labels (planets, HQ) projected to screen each frame */
+.world-label {
+  position: fixed; z-index: 8; pointer-events: none; transform: translate(-50%, -50%);
+  color: #c9d4e3; font: 12px 'Segoe UI', sans-serif; text-shadow: 0 1px 4px #000a, 0 0 8px #0008;
+  white-space: nowrap;
+}
+.world-label.hq { color: #9fd6ff; font-weight: 600; }
