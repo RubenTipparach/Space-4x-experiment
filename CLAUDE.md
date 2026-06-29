@@ -56,9 +56,28 @@ Messy ships come from asymmetric parts straddling the centerline. The discipline
    doing true subdiv/NURBS surfacing.
 5. **Glow:** emissive materials for engines/windows/accents, colored by the faction's
    glow token.
+6. **Proportion & stand-off.** Keep features modest — nacelles/pods should not rival
+   the hull in size. Hold nacelles/wings **off the hull on visible pylon struts** (a
+   clear gap), never flush against it.
+7. **No painted accents as geometry.** Stripes, faction trim, and insignia are
+   **textures/decals on the surface**, NOT stuck-on boxes. A flat colored box laid on
+   the hull reads as a "random rectangle." Use geometry only for actual 3D structure;
+   leave paint/markings to the material layer.
 
-Result: a clean symmetric silhouette with believable one-sided greeble — not random
-boxes stacked across the middle.
+Result: a clean symmetric silhouette with a distinctive profile and believable
+one-sided greeble — not random boxes stacked across the middle.
+
+### Rendering & iteration (reliable workflow)
+
+- **Run renders in the foreground with a hard timeout** (e.g. `timeout 220 python3 …`).
+  Backgrounding multiple Blender runs causes CPU contention that looks like a hang.
+- **Fast iteration knobs (env):** `SAMPLES` (Cycles samples, default 160; use ~48–110
+  while iterating) and `RES` (pixels, default 768; use ~640–720). Crank both for finals.
+- **Check the silhouette early:** `VIEWS=1 python3 scripts/concept/blender_clean.py
+  <id>` renders **top / side / front / hero**; compose with the views sheet to confirm
+  all three profiles are non-rectangular before adding detail.
+- **Per-faction loop:** model → `VIEWS=1` hero+profiles → review/commit → only then add
+  detail or render the full `ANGLES=24` turnaround. Commit each faction's render.
 
 ### Sprite spec
 
