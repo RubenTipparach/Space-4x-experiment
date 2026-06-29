@@ -243,11 +243,9 @@ def terra():  # frontier freighter — heavy lofted slab-keel, rust, salvage det
                           cyl(0.28, 0.7, (sx * 1.0, -1.35, 0), (math.radians(90), 0, 0), dark),
                           disc(0.24, 0.06, (sx * 1.0, -1.66, 0), glow)])
     o += pair(lambda sx: cyl(0.05, 1.0, (sx * 0.5, 1.3, 0.25), (math.radians(90), 0, 0), tan))   # guns
-    # one-sided salvage detail (offside guards the centerline)
-    o += [offside(box((0.6, 0.85, 0.55), (-1.0, -0.1, 0.05), (0, 0, 0), dark, bevel=0.05))]      # salvage pod L
-    o += [offside(box((0.16, 0.45, 0.16), (-0.6, -0.1, 0.05), (0, 0, math.radians(90)), tan))]   # strut L
-    o += [offside(cyl(0.04, 1.1, (0.85, 0.5, 0.45), (0, math.radians(18), 0), tan))]             # antenna R
-    o += [offside(box((0.35, 0.35, 0.3), (0.55, 0.6, 0.55), (0, 0, 0), tan))]                    # crate R
+    # symmetric "truck": mirrored cargo blisters + roof vents (no asymmetric clutter)
+    o += pair(lambda sx: box((0.22, 0.7, 0.4), (sx * 0.82, 0.2, 0.0), (0, 0, 0), dark, bevel=0.05))  # cargo blister
+    o += pair(lambda sx: box((0.12, 0.3, 0.16), (sx * 0.3, 0.6, 0.55), (0, 0, 0), tan))              # roof vent
     return o
 
 
@@ -278,12 +276,10 @@ def astryn():  # rebels — lofted keel fighter, scrappy one-sided detail, olive
     stations = [(1.7, 0.08, 0.08, 0.0), (1.1, 0.34, 0.32, 0.02), (0.3, 0.55, 0.46, 0.03),
                 (-0.5, 0.55, 0.44, 0.0), (-1.2, 0.4, 0.34, -0.02), (-1.5, 0.12, 0.14, -0.03)]
     o += [loft_hull(shape, stations, olive, bevel=0.05)]
-    # chunky circular nacelles on pylons (no wings) — scrappy, mismatched detail
-    o += pair(lambda sx: [box((0.4, 0.1, 0.07), (sx * 0.7, -0.25, 0.03), (0, 0, 0), dark),
-                          *nacelle((sx * 1.05, -0.35, 0.03), 1.4, 0.22, olive, glow, "hex")])
-    # one-sided scrappy detail
-    o += [offside(box((0.4, 0.5, 0.4), (-0.55, 0.2, 0.16), (0, 0, 0), dark))]        # patch panel L
-    o += [offside(box((0.13, 0.6, 0.13), (0.6, 0.35, 0.2), (0, 0, 0), orange))]      # sensor pod R
+    o += [box((0.12, 0.6, 0.1), (0, 0.2, 0.3), (0, 0, 0), orange)]  # centered dorsal accent
+    # symmetric — WIDE SWEPT pylons holding hex nacelles (distinct from Consortium's straight ones)
+    o += pair(lambda sx: [box((0.4, 0.26, 0.08), (sx * 0.66, -0.15, 0.03), (0, 0, sx * 0.55), olive, bevel=0.04),
+                          *nacelle((sx * 1.0, -0.55, 0.03), 1.5, 0.2, olive, glow, "hex")])
     return o
 
 
@@ -320,11 +316,10 @@ def krithul():  # plague — bulbous lofted lens, one-sided lumps, toxic glow
     o += [loft_hull(shape, stations, flesh, bevel=0.1, smooth=True)]
     o += [disc(0.26, 0.07, (0, -1.2, 0), glow)]                # centered drive
     o += [sphere((0, 0.6, 0.5), (0.13, 0.13, 0.13), glow)]     # centered pustule
-    # one-sided diseased lumps (offside) + glow pustules — kept slimmer
-    o += [offside(box((0.42, 0.7, 0.4), (0.5, 0.4, 0.05), (0, 0, math.radians(12)), flesh, bevel=0.14))]
-    o += [offside(box((0.36, 0.55, 0.36), (-0.48, -0.2, 0.0), (0, 0, math.radians(-10)), flesh, bevel=0.14))]
-    o += [offside(sphere((0.5, -0.15, 0.32), (0.12, 0.12, 0.12), glow))]
-    o += [offside(sphere((-0.42, 0.25, 0.32), (0.13, 0.13, 0.13), glow))]
+    # symmetric diseased growths — mirrored pairs seated to fuse into the hull
+    o += pair(lambda sx: box((0.34, 0.62, 0.36), (sx * 0.34, 0.3, 0.0), (0, 0, sx * 0.12), flesh, bevel=0.14))
+    o += pair(lambda sx: box((0.28, 0.46, 0.3), (sx * 0.3, -0.35, -0.02), (0, 0, sx * -0.1), flesh, bevel=0.14))
+    o += pair(lambda sx: sphere((sx * 0.3, 0.0, 0.26), (0.11, 0.11, 0.11), glow))
     o += pair(lambda sx: cyl(0.08, 1.0, (sx * 0.28, -1.2, -0.05), (math.radians(72), 0, sx * 0.18), dark))
     return o
 
