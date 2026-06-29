@@ -85,6 +85,15 @@ Top-down 3/4 view, **24 yaw angles per ship** (360 / 15°), fixed elevation. 6 s
 classes × 8 factions = 48 ships → **1,152 sprites** (before resolution/LOD variants).
 See `docs/FACTIONS_AND_ART.md` §5b–5c.
 
+## Client (vertical slice)
+
+`client/` is a Vite + TypeScript + **PixiJS v8** app (client-only so far): the
+solar-system view with 15 planets/moons/gas-giant nodes, a bottom fleet toolbar of 8
+ships (the 24-angle Blender sprites in `client/public/sprites/`), click-to-move,
+mining→HQ, and resource tags. Run: `cd client && npm install && npm run dev`. See
+`client/README.md`. Renderer is WebGL by default (`?r=webgpu` to opt in); headless
+software-GL can't init Pixi, so run it in a real browser.
+
 ## Git / workflow
 
 - Develop on `claude/scifi-mmo-engine-research-e1h48o`; open draft PRs.

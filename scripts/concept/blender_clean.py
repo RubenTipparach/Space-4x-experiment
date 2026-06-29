@@ -11,7 +11,7 @@ import bpy, math, os, sys
 from mathutils import Vector, Matrix
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-OUT = os.path.join(ROOT, "assets", "sprites", "clean")
+OUT = os.environ.get("OUTDIR", os.path.join(ROOT, "assets", "sprites", "clean"))
 os.makedirs(OUT, exist_ok=True)
 
 

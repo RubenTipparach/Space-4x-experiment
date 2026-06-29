@@ -77,6 +77,19 @@ matters (rather than one blended cost for everything):
 scarce, contested resource, gating fuel/advanced tech on it reinforces why gas giants
 are worth fighting over.*
 
+### 2.5 Planet colony resource tags
+
+Beyond the three raw resources, **planets carry colony resource tags** that become
+revenue streams once a planet is colonized (revenue model TBD). Launch tag set:
+
+- **Animals**, **plant biomes**, **underwater biomes** — biological/ecological value.
+- **Rare minerals** — high-value extraction.
+- **Tourist attractions** — passive revenue / traffic.
+
+A planet can have multiple tags; gas giants are tagged **gas** (mined at their
+Lagrange nodes, §2.2). The client slice surfaces these as hover tags and lets ships
+harvest a body's primary resource to HQ. Colonization → revenue is a later phase.
+
 ---
 
 ## 3. Ships & Roles

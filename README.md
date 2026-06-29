@@ -9,6 +9,18 @@ The world is **persistent and always simulating**: mining accrues, fleets travel
 and colonies grow whether or not you're online. Presented **top-down in 2D**, with
 new starships added on a regular cadence.
 
+## Play the vertical slice
+
+A client-only PixiJS slice of the solar-system view (fleet toolbar, click-to-move,
+mining → HQ, 15 planets with resource tags) lives in [`client/`](client/):
+
+```bash
+cd client && npm install && npm run dev   # http://localhost:5173
+```
+
+Ship art is 3D-modeled in Blender and rendered to sprites — see
+[`CLAUDE.md`](CLAUDE.md) and [`scripts/concept/`](scripts/concept/).
+
 ## Design
 
 - 📄 **[docs/TECH_DESIGN.md](docs/TECH_DESIGN.md)** — engine choice, rendering
