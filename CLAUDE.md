@@ -85,40 +85,40 @@ Top-down 3/4 view, **24 yaw angles per ship** (360 / 15°), fixed elevation. 6 s
 classes × 8 factions = 48 ships → **1,152 sprites** (before resolution/LOD variants).
 See `docs/FACTIONS_AND_ART.md` §5b–5c.
 
-### Normal-mapped sprite lighting (ships react to the star)
+### Ships are real-time 3D (glTF), not sprites
 
-Ships are lit per-pixel in PixiJS (v8 `Mesh` + custom GLSL shader) so the sprite's lit
-side follows the in-system star. Each yaw frame ships with a matching **camera-space
-normal map**.
+The earlier baked-sprite path (24-yaw PNGs, baked normal maps, Pixi) is **abandoned**:
+pre-baked lighting always looked washed-out and could never match the live star. Ships
+are now the actual Blender models, exported to glTF and lit live in Three.js.
 
-- **Render** (`scripts/concept/blender_normal.py`): `ANGLES=24 SAMPLES=48 RES=512 python3
-  scripts/concept/blender_normal.py [id ...]` writes `client/public/sprites/nm/<id>_y###_n.png`
-  for every 15° yaw — at the **same camera** as `blender_clean.frame(objs, yaw)`, so the
-  normal maps register with the existing lit `<id>_y###.png` albedo sprites. Encoding:
-  emit `VectorTransform(Geometry.Normal, world→camera) * 0.5 + 0.5` with the **Raw** view
-  transform (literal bytes). `ANGLES=1` writes a single hero `<id>_albedo.png` + `<id>_n.png`
-  for de-risk tests.
-- **Decode** (shader): `n = (r, b, g) * 2 - 1` — the **G/B channel swap** is required
-  (validated against the Three.js proof; don't drop it). Then `lit = 1 + strength*(dot(n, L) - bias)`
-  *modulates* the already-shaded albedo (keeps baked detail, adds a directional term).
-- **Light dir** = ship→star in screen space with `y` flipped (screen-y-down → shader
-  y-up) and a small `+z` toward-viewer term; the sprite's residual spin is fed back as
-  `uResid` to rotate the normals' XY so lighting stays correct between the 24 frames.
-- De-risk harnesses (kept as references): `pixi_nm_test.mjs` (Pixi v8 can do it),
-  `pixi_relight_test.mjs` (modulation on the real albedo), `nm_lighting.mjs` (Three.js
-  proof). **Pixi v8 gotcha:** UBO uniforms need GLSL ES 3.00 — prefix shaders with
-  `#version 300 es` or `Shader.from` compiles them as ES 1.00 and `in/out` fails. Also
-  `Texture.from(urlString)` returns `undefined` in v8 (use `Assets.load`'s returned
-  record; `Texture.from` only accepts canvas/Image/cached ids).
+- **Export** (`scripts/concept/export_glb.py`): `python3 scripts/concept/export_glb.py
+  [id ...]` builds each ship via `blender_clean.BUILDERS` and writes
+  `client/public/models/<id>.glb` (Principled BSDF + Emission materials and Bevel
+  modifiers baked in; `export_yup` so Blender +Y nose → glTF −Z forward). Re-run after
+  changing a ship model.
+- The 24-angle sprite renderer (`blender_clean.py` `make`/`ANGLES`) is kept only for the
+  fleet-toolbar thumbnails (`<id>_y000.png`); in-world ships use the GLB.
 
-## Client (vertical slice)
+## Client (vertical slice) — 3D, Three.js
 
-`client/` is a Vite + TypeScript + **PixiJS v8** app (client-only so far): the
-solar-system view with 15 planets/moons/gas-giant nodes, a bottom fleet toolbar of 8
-ships (the 24-angle Blender sprites in `client/public/sprites/`), click-to-move,
-mining→HQ, and resource tags. Run: `cd client && npm install && npm run dev`. See
-`client/README.md`. Renderer is WebGL by default (`?r=webgpu` to opt in); headless
-software-GL can't init Pixi, so run it in a real browser.
+`client/` is a Vite + TypeScript + **Three.js** app (client-only so far): a true-3D
+solar system on the XZ plane (sun at the origin lighting everything), 15 procedural
+**shader planets** (`src/planet.ts`: terrain/water/ice, animated clouds, night-side city
+lights, atmospheric rim; gas giants get turbulent bands + a storm + rings), an asteroid
+belt (InstancedMesh), Keplerian comets (eccentric, tails point **away** from the sun),
+real 3D glTF ships lit by the star, click-to-move/mine/recall (raycast), and the HTML HUD
+(fleet bar, HQ stores). Camera is OrbitControls (drag-orbit, scroll-zoom). Run:
+`cd client && npm install && npm run dev`.
+
+Rendering notes:
+- Metallic glTF materials read **black** without an environment — `RoomEnvironment` +
+  `PMREMGenerator` set `scene.environment` so hulls catch light; the sun is a
+  `PointLight` with `decay=0` so it reaches the whole system. `ACESFilmic` tone mapping.
+- Planets self-shade in their shaders (sun direction = `normalize(-worldPos)`); they do
+  **not** use Three lights, so they're unaffected by `scene.environment`.
+- Watch module init order: functions hoist, but top-level/closure `const`s do not —
+  don't call a builder (e.g. `buildToolbar`) before the HUD `const`s it closes over are
+  declared (TDZ → "Cannot access X before initialization").
 
 ### Visual claims require a screenshot (IMPORTANT)
 
@@ -140,15 +140,14 @@ slice from the sandbox:
 How it works / gotchas (all already handled in the code):
 - Headless Chromium has no GPU, so the script forces **software GL** via
   `--use-angle=swiftshader --enable-unsafe-swiftshader --ignore-gpu-blocklist --no-sandbox`.
-  PixiJS v8 renders fine on SwiftShader.
-- **Do NOT block boot on a bulk `Assets.load`** — that GPU-bound bulk decode hangs
-  under SwiftShader (and stalled real browsers too). The client uses lazy
-  `Texture.from(...)` so the scene/camera/HUD come up immediately; sprites stream in.
-- The client sets **`window.__ready = true`** at the end of boot; the screenshot
-  script waits on that before capturing. Keep that marker.
-- Minimal `new Application().init(...)` works headless — if a screenshot comes back
-  black, the bug is almost always app-side boot ordering (e.g. fitting the camera
-  only *after* an awaited load), not the renderer.
+  Three.js (WebGLRenderer) + custom GLSL + glTF render fine on SwiftShader.
+- The client sets **`window.__ready = true`** at the end of boot (after the glTF ships
+  load); the screenshot script waits on that before capturing. Keep that marker.
+- `window.__game = { ships, scene, camera, controls }` is exposed for tests. To aim a
+  screenshot, set **`controls.target` *and* `camera.position`** — OrbitControls owns the
+  orientation, so a bare `camera.lookAt()` gets overwritten each frame by `controls.update()`.
+- If a screenshot is black, it's almost always app-side (a thrown error before
+  `__ready`, or boot ordering), not the renderer.
 
 ## Git / workflow
 

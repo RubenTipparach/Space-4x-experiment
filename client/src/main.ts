@@ -1,69 +1,30 @@
-import { Application, Container, Graphics, Sprite, Text, Texture, Assets, Geometry, Mesh, Shader, Circle } from 'pixi.js';
+// Stellar Frontier — 3D vertical slice (Three.js). The solar system lives on the XZ
+// plane (Y up); the sun is at the origin and lights everything. Ships are real glTF
+// models lit live (no baked sprites). Planets are procedural shader spheres. The HTML
+// HUD (fleet bar, HQ stores, hint) is reused from the 2D slice.
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { makePlanet, makeStar, type Planet } from './planet.ts';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
 
 const BASE = import.meta.env.BASE_URL;
-const ANGLES = 24;
-const SHIP_SCALE = 0.085;          // ~1/4 of the previous size
 const SHIP_SPEED = 150;
-const TURN_RATE = 6;               // rad/s — smooth turning between frames
+const TURN_RATE = 4;
 const MINE_RATE = 22;
 const CARGO_CAP = 100;
-const ISO = 0.58;                  // vertical squash → isometric/oblique orbital plane
-const HQ = { x: 250, y: -300 * ISO };   // clear of the star's glow so ships read
-const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
-const TEX_LIGHT_ANGLE = Math.atan2(0.42 - 0.5, 0.72 - 0.5); // sphere highlight direction
+const HQ = new THREE.Vector3(250, 0, -300);
+const SHIP_Y = 6;                  // hover height above the orbital plane
 
-const yawDeg = (idx: number) => String(((idx % ANGLES) + ANGLES) % ANGLES * 15).padStart(3, '0');
-const frameUrl = (fid: string, idx: number) => `${BASE}sprites/${fid}_y${yawDeg(idx)}.png`;
-const normalUrl = (fid: string, idx: number) => `${BASE}sprites/nm/${fid}_y${yawDeg(idx)}_n.png`;
-
-// ---- normal-mapped ship lighting (Mesh + custom shader) ----
-const SEL_R = 15;                     // selection disc radius (world units)
-const SHIP_HIT_R = 14;                // tight click target around the ship
-const SHIP_TEX = 320;                 // sprite native size → centered quad half-extent
-const SHIP_LIGHT_Z = 0.55;            // toward-viewer component of the star light
-const SHIP_LIGHT_STR = 0.85;          // how strongly the normal map modulates the baked albedo
-const SHIP_LIGHT_BIAS = 0.32;
-const shipVert = `#version 300 es
-  in vec2 aPosition; in vec2 aUV; out vec2 vUV;
-  uniform mat3 uProjectionMatrix; uniform mat3 uWorldTransformMatrix; uniform mat3 uTransformMatrix;
-  void main(){ mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
-    gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0); vUV = aUV; }`;
-const shipFrag = `#version 300 es
-  precision highp float;
-  in vec2 vUV; out vec4 fragColor;
-  uniform sampler2D uAlbedo; uniform sampler2D uNormal;
-  uniform vec3 uLight; uniform float uResid; uniform float uStrength; uniform float uBias;
-  void main(){
-    vec4 a = texture(uAlbedo, vUV); if (a.a < 0.04) discard;
-    vec3 raw = texture(uNormal, vUV).rgb * 2.0 - 1.0;
-    vec3 n = normalize(vec3(raw.r, raw.b, raw.g));          // Blender camera-space decode
-    float c = cos(uResid), s = sin(uResid);                 // rotate normal to match sprite spin
-    n.xy = mat2(c, -s, s, c) * n.xy;
-    float d = dot(n, normalize(uLight));
-    float lit = clamp(1.0 + uStrength * (d - uBias), 0.3, 1.85);
-    fragColor = vec4(a.rgb * lit, a.a);
-  }`;
-const shipGeometry = () => new Geometry({
-  attributes: {
-    aPosition: [-SHIP_TEX / 2, -SHIP_TEX / 2, SHIP_TEX / 2, -SHIP_TEX / 2, SHIP_TEX / 2, SHIP_TEX / 2, -SHIP_TEX / 2, SHIP_TEX / 2],
-    aUV: [0, 0, 1, 0, 1, 1, 0, 1],
-  },
-  indexBuffer: [0, 1, 2, 0, 2, 3],
-});
-// flat normal (points at viewer) used until the per-yaw maps stream in
-const FLAT_N = canvasTexFill(0x7fff7f);   // decode → n≈(0,0,1)
-const PLACEHOLDER = canvasTex(2, 2, () => {});   // transparent → ship invisible until albedo streams in
-
-interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): { x: number; y: number }; }
-type Vec = { x: number; y: number };
+type Vec = { x: number; z: number };
+interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): THREE.Vector3; }
 interface Ship {
-  def: typeof FACTIONS[number]; mesh: Mesh<Geometry, Shader>; shader: Shader; albedo: Texture[]; normals: Texture[];
-  disc: Graphics; icon: Graphics; sc: Container;
-  pos: Vec; state: 'idle' | 'moving' | 'mining' | 'returning';
-  moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null; heading: number;
+  def: typeof FACTIONS[number]; obj: THREE.Object3D; disc: THREE.Mesh; beam: THREE.Mesh;
+  pos: Vec; heading: number; state: 'idle' | 'moving' | 'mining' | 'returning';
+  moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null;
 }
 
 const resources: Record<ResourceTag, number> = {
@@ -73,430 +34,394 @@ const mineTargets: MineTarget[] = [];
 let ships: Ship[] = [];
 let selected = 0;
 
-// ---- DOM (module scripts are deferred, so the DOM is ready) ----
 const showErr = (m: string) => { const h = document.getElementById('hint'); if (h) h.textContent = m; };
 window.addEventListener('error', (e) => showErr('Error: ' + e.message));
 window.addEventListener('unhandledrejection', (e: any) => showErr('Error: ' + (e.reason?.message || e.reason)));
-
-// ---------- procedural textures (canvas → GPU) ----------
-function canvasTex(w: number, h: number, draw: (x: CanvasRenderingContext2D, w: number, h: number) => void): Texture {
-  const c = document.createElement('canvas'); c.width = w; c.height = h;
-  draw(c.getContext('2d')!, w, h);
-  return Texture.from(c);
-}
-function canvasTexFill(rgb: number): Texture {
-  return canvasTex(2, 2, (x) => { x.fillStyle = '#' + rgb.toString(16).padStart(6, '0'); x.fillRect(0, 0, 2, 2); });
-}
-const SPHERE = canvasTex(256, 256, (x, w, h) => {
-  const cx = w / 2, cy = h / 2, R = w / 2;
-  x.save(); x.beginPath(); x.arc(cx, cy, R - 1, 0, 7); x.clip();
-  const lx = w * 0.72, ly = h * 0.42;
-  const g = x.createRadialGradient(lx, ly, 2, lx, ly, R * 1.3);
-  g.addColorStop(0, '#ffffff'); g.addColorStop(0.16, '#dcdcdc'); g.addColorStop(0.46, '#8c8c8c');
-  g.addColorStop(0.82, '#262626'); g.addColorStop(1, '#0b0b0b');
-  x.fillStyle = g; x.fillRect(0, 0, w, h);
-  for (let i = 0; i < 140; i++) {
-    const a = Math.random() * 7, r = Math.random() * R * 0.95;
-    x.fillStyle = `rgba(0,0,0,${Math.random() * 0.06})`;
-    x.beginPath(); x.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, Math.random() * 4 + 1, 0, 7); x.fill();
-  }
-  x.restore();
-});
-const GLOW = canvasTex(128, 128, (x, w, h) => {
-  const g = x.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
-  g.addColorStop(0, 'rgba(255,255,255,0.95)'); g.addColorStop(0.45, 'rgba(255,255,255,0.35)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  x.fillStyle = g; x.fillRect(0, 0, w, h);
-});
-const NEB_COLORS = ['#6a37e0', '#c0379f', '#1f9fc0', '#3a5be0', '#9b4fe0', '#e06aa0'];
-const a2 = (a: number) => Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
-const pick = (arr: string[]) => arr[(Math.random() * arr.length) | 0];
-// One vibrant, non-tiling nebula across the whole canvas (no repeating grid).
-function drawNebula(x: CanvasRenderingContext2D, w: number, h: number) {
-  x.clearRect(0, 0, w, h);
-  x.globalCompositeOperation = 'lighter';
-  const blob = (cx: number, cy: number, r: number, col: string, al: number) => {
-    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r);
-    g.addColorStop(0, col + a2(al)); g.addColorStop(0.55, col + a2(al * 0.35)); g.addColorStop(1, col + '00');
-    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill();
-  };
-  for (let i = 0; i < 16; i++) blob(Math.random() * w, Math.random() * h, 160 + Math.random() * 360, pick(NEB_COLORS), 0.10 + Math.random() * 0.12);
-  for (let i = 0; i < 54; i++) blob(Math.random() * w, Math.random() * h, 40 + Math.random() * 130, pick(NEB_COLORS), 0.08 + Math.random() * 0.14);
-  for (let i = 0; i < 600; i++) { x.fillStyle = pick(NEB_COLORS) + '12'; x.beginPath(); x.arc(Math.random() * w, Math.random() * h, Math.random() * 1.6, 0, 7); x.fill(); }
-}
+const seedFor = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return (h % 1000) / 7.3; };
 
 main().catch((err) => { showErr('Boot error: ' + (err?.message || err)); console.error(err); });
 
 async function main() {
-  const pref = (new URLSearchParams(location.search).get('r') as 'webgl' | 'webgpu') || 'webgl';
-  const app = new Application();
-  await app.init({ background: 0x04060b, resizeTo: window, antialias: true, preference: pref });
-  document.getElementById('game')!.appendChild(app.canvas);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  document.getElementById('game')!.appendChild(renderer.domElement);
 
-  // background hit-rect for pan / click-to-move
-  const bg = new Graphics();
-  bg.eventMode = 'static';
-  app.stage.addChild(bg);
-  const sizeBg = () => bg.clear().rect(0, 0, app.screen.width, app.screen.height).fill({ color: 0x000000, alpha: 0.001 });
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 1, 20000);
+  camera.position.set(0, 760, 980);
 
-  // STATIC background (screen space, no parallax — distant stars don't move).
-  // Rebuilt on resize to cover the viewport; single image so there is no tiling grid.
-  const bgVisual = new Container(); bgVisual.eventMode = 'none'; app.stage.addChild(bgVisual);
-  function buildBackground() {
-    bgVisual.removeChildren();
-    const w = app.screen.width, h = app.screen.height;
-    const neb = new Sprite(canvasTex(Math.min(w, 1920), Math.min(h, 1200), drawNebula));
-    neb.width = w; neb.height = h; neb.alpha = 0.9; bgVisual.addChild(neb);
-    const g = new Graphics();
-    const n = Math.floor(w * h / 2200);   // denser starfield
-    for (let i = 0; i < n; i++) {
-      const big = Math.random() < 0.14;
-      const size = big ? 1.0 + Math.random() * 1.7 : 0.3 + Math.random() * 1.0;
-      const a = big ? 0.6 + Math.random() * 0.4 : 0.18 + Math.random() * 0.4;
-      const col = Math.random() < 0.15 ? 0xbcd2ff : Math.random() < 0.1 ? 0xffe6c8 : 0xffffff;
-      g.circle(Math.random() * w, Math.random() * h, size).fill({ color: col, alpha: a });
-    }
-    bgVisual.addChild(g);
-  }
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  controls.minDistance = 60; controls.maxDistance = 6000;
+  controls.maxPolarAngle = Math.PI * 0.49;   // stay above the plane
 
-  // world (camera)
-  const world = new Container();
-  app.stage.addChild(world);
+  // ---------- lighting (for the glTF ships; planets self-shade in their shaders) ----------
+  const sunLight = new THREE.PointLight(0xfff0d0, 3.2, 0, 0); // decay 0 → reaches the whole system
+  scene.add(sunLight);                                        // at origin (the star)
+  scene.add(new THREE.HemisphereLight(0x6a82c0, 0x140c20, 0.6));
+  // neutral studio environment so metallic ship hulls reflect light instead of reading black
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-  // central star (uniformly bright core + additive glow)
-  const sunGlow = new Sprite(GLOW); sunGlow.anchor.set(0.5); sunGlow.tint = 0xffcf86;
-  sunGlow.blendMode = 'add'; sunGlow.width = sunGlow.height = 430; world.addChild(sunGlow);
-  const sunCore = new Graphics()
-    .circle(0, 0, 40).fill({ color: 0xffe2a8 })
-    .circle(0, 0, 30).fill({ color: 0xfff4d8 });
-  world.addChild(sunCore);
+  // ---------- background: starfield + nebula dome ----------
+  scene.background = new THREE.Color(0x05060c);
+  buildStars(scene);
+  buildNebula(scene);
 
-  // ---------- tooltips ----------
-  const tip = document.getElementById('tooltip')!;
-  const hoverable = (node: Container, html: string) => {
-    node.eventMode = 'static'; node.cursor = 'pointer';
-    node.on('pointerover', () => { tip.innerHTML = html; tip.hidden = false; });
-    node.on('pointerout', () => { tip.hidden = true; });
-  };
-  const tagsHtml = (tags: ResourceTag[]) => tags.map((t) => RESOURCE_LABEL[t]).join(', ');
-  const worldPos = (c: Container): Vec => { const l = world.toLocal(c.getGlobalPosition()); return { x: l.x, y: l.y }; };
+  // ---------- the star ----------
+  const star = makeStar(46);
+  scene.add(star);
 
-  interface Orbiter { c: Container; orbit: number; angle: number; speed: number; }
+  // ---------- planets / moons / gas nodes ----------
+  interface Orbiter { group: THREE.Group; planet: Planet; orbit: number; angle: number; speed: number; }
   const orbiters: Orbiter[] = [];
-  interface Spinner { c: Container; parent: Container; dist: number; angle: number; speed: number; }
+  interface Spinner { group: THREE.Group; planet: Planet; parent: THREE.Group; dist: number; angle: number; speed: number; }
   const spinners: Spinner[] = [];
-  const shaded: { spr: Sprite; c: Container }[] = [];   // bodies that track the star's light
+  const hoverMeshes: { mesh: THREE.Object3D; html: string }[] = [];
+  const labels: { el: HTMLDivElement; obj: THREE.Object3D; off: number }[] = [];
 
-  const bindMine = (obj: Container, mt: MineTarget) => {
-    obj.eventMode = 'static'; obj.cursor = 'pointer';
-    obj.on('pointertap', (e) => {
-      e.stopPropagation();
-      const s = ships[selected]; if (!s) return;
-      s.mine = mt; s.moveTo = null; s.state = 'moving';
-      flashHint(`${s.def.name} → mining ${mt.name} (${RESOURCE_LABEL[mt.resource]})`);
-    });
+  const mkLabel = (text: string, obj: THREE.Object3D, off: number, cls = 'world-label') => {
+    const el = document.createElement('div'); el.className = cls; el.textContent = text;
+    document.body.appendChild(el); labels.push({ el, obj, off });
   };
 
   for (const p of PLANETS) {
-    world.addChild(new Graphics().ellipse(0, 0, p.orbit, p.orbit * ISO).stroke({ width: 1, color: 0x223247, alpha: 0.45 }));
-    const pc = new Container();
-    pc.x = Math.cos(p.angle0) * p.orbit; pc.y = Math.sin(p.angle0) * p.orbit * ISO;
-    world.addChild(pc);
-    orbiters.push({ c: pc, orbit: p.orbit, angle: p.angle0, speed: p.speed });
-
-    // atmosphere halo
-    const halo = new Sprite(GLOW); halo.anchor.set(0.5); halo.tint = p.color; halo.blendMode = 'add';
-    halo.alpha = p.type === 'gas' ? 0.5 : 0.3; halo.width = halo.height = p.size * (p.type === 'gas' ? 3.4 : 2.7);
-    pc.addChild(halo);
-    // shaded sphere
-    const body = new Sprite(SPHERE); body.anchor.set(0.5); body.tint = p.color; body.width = body.height = p.size * 2;
-    pc.addChild(body); shaded.push({ spr: body, c: pc });
-    if (p.type === 'gas') { // banding hint via a faint ring
-      const ring = new Graphics().ellipse(0, 0, p.size * 1.5, p.size * 0.5).stroke({ width: 2, color: 0xffffff, alpha: 0.06 });
-      pc.addChild(ring);
-    }
-
-    const label = new Text({ text: p.name, style: { fill: 0xc9d4e3, fontSize: 12, fontFamily: 'Segoe UI' } });
-    label.anchor.set(0.5, 0); label.y = p.size + 8; pc.addChild(label);
-    p.tags.forEach((t, i) => {
-      const dot = new Graphics().circle(0, 0, 3).fill({ color: RES_COLOR[t] });
-      dot.x = (i - (p.tags.length - 1) / 2) * 9; dot.y = p.size + 24; pc.addChild(dot);
-    });
-    hoverable(body, `<div class="t-name">${p.name}${p.type === 'gas' ? ' (gas giant)' : ''}</div><div class="t-tags">${tagsHtml(p.tags)}</div>`);
+    addOrbitRing(scene, p.orbit);
+    const pl = makePlanet({ radius: p.size, color: p.color, gas: p.type === 'gas', seed: seedFor(p.name) });
+    const g = pl.group;
+    g.position.set(Math.cos(p.angle0) * p.orbit, 0, Math.sin(p.angle0) * p.orbit);
+    scene.add(g);
+    orbiters.push({ group: g, planet: pl, orbit: p.orbit, angle: p.angle0, speed: p.speed });
+    if (p.type === 'gas') addRings(g, p.size, p.color);
+    mkLabel(p.name, g, p.size + 12);
+    hoverMeshes.push({ mesh: g, html: `<div class="t-name">${p.name}${p.type === 'gas' ? ' (gas giant)' : ''}</div><div class="t-tags">${p.tags.map((t) => RESOURCE_LABEL[t]).join(', ')}</div>` });
 
     if (p.type === 'gas') {
       for (let n = 0; n < GAS_NODES; n++) {
-        const nc = new Container(); const na = (n / GAS_NODES) * Math.PI * 2; const nd = p.size + 26;
-        nc.x = Math.cos(na) * nd; nc.y = Math.sin(na) * nd * ISO;
-        const g = new Graphics().circle(0, 0, 6).fill({ color: RES_COLOR.gas }).circle(0, 0, 10).stroke({ width: 1.5, color: RES_COLOR.gas, alpha: 0.5 });
-        nc.addChild(g); pc.addChild(nc);
-        const mt: MineTarget = { name: `${p.name} node ${n + 1}`, resource: 'gas', radius: 12, pos: () => worldPos(nc) };
-        mineTargets.push(mt); hoverable(g, `<div class="t-name">${mt.name}</div><div class="t-tags">gas</div>`); bindMine(g, mt);
+        const na = (n / GAS_NODES) * Math.PI * 2, nd = p.size + 26;
+        const node = new THREE.Mesh(
+          new THREE.SphereGeometry(5, 16, 12),
+          new THREE.MeshBasicMaterial({ color: RES_COLOR.gas }));
+        node.position.set(Math.cos(na) * nd, 0, Math.sin(na) * nd);
+        g.add(node);
+        const mt: MineTarget = { name: `${p.name} node ${n + 1}`, resource: 'gas', radius: 12, pos: () => node.getWorldPosition(new THREE.Vector3()) };
+        mineTargets.push(mt);
+        hoverMeshes.push({ mesh: node, html: `<div class="t-name">${mt.name}</div><div class="t-tags">gas</div>` });
+        (node.userData as any).mine = mt;
       }
     } else {
-      const mt: MineTarget = { name: p.name, resource: p.primary, radius: p.size + 6, pos: () => worldPos(pc) };
-      mineTargets.push(mt); bindMine(body, mt);
+      const mt: MineTarget = { name: p.name, resource: p.primary, radius: p.size + 8, pos: () => g.getWorldPosition(new THREE.Vector3()) };
+      mineTargets.push(mt); (g.userData as any).mine = mt;
     }
 
     for (const m of (p.moons ?? [])) {
-      const mc = new Container();
-      mc.x = pc.x + Math.cos(m.angle0) * m.dist; mc.y = pc.y + Math.sin(m.angle0) * m.dist * ISO;
-      world.addChild(mc); spinners.push({ c: mc, parent: pc, dist: m.dist, angle: m.angle0, speed: m.speed });
-      const mb = new Sprite(SPHERE); mb.anchor.set(0.5); mb.tint = 0xc2c8d2; mb.width = mb.height = m.size * 2;
-      mc.addChild(mb); shaded.push({ spr: mb, c: mc });
-      mc.addChild(new Graphics().circle(0, m.size + 4, 2.5).fill({ color: RES_COLOR[m.resource] }));
-      const mt: MineTarget = { name: m.name, resource: m.resource, radius: m.size + 5, pos: () => worldPos(mc) };
-      mineTargets.push(mt);
-      hoverable(mb, `<div class="t-name">${m.name} (moon)</div><div class="t-tags">${RESOURCE_LABEL[m.resource]}</div>`);
-      bindMine(mb, mt);
+      const ml = makePlanet({ radius: m.size, color: 0xc2c8d2, gas: false, seed: seedFor(m.name) });
+      const mg = ml.group;
+      mg.position.set(g.position.x + Math.cos(m.angle0) * m.dist, 0, g.position.z + Math.sin(m.angle0) * m.dist);
+      scene.add(mg);
+      spinners.push({ group: mg, planet: ml, parent: g, dist: m.dist, angle: m.angle0, speed: m.speed });
+      const mt: MineTarget = { name: m.name, resource: m.resource, radius: m.size + 6, pos: () => mg.getWorldPosition(new THREE.Vector3()) };
+      mineTargets.push(mt); (mg.userData as any).mine = mt;
+      hoverMeshes.push({ mesh: mg, html: `<div class="t-name">${m.name} (moon)</div><div class="t-tags">${RESOURCE_LABEL[m.resource]}</div>` });
     }
   }
 
-  // HQ station
-  const hq = new Container(); hq.x = HQ.x; hq.y = HQ.y; world.addChild(hq);
-  hq.addChild(new Graphics()
-    .circle(0, 0, 16).stroke({ width: 2, color: 0x5ec8ff, alpha: 0.7 })
-    .poly([0, -10, 9, 0, 0, 10, -9, 0]).fill({ color: 0x9fd6ff })
-    .circle(0, 0, 3).fill({ color: 0x04060b }));
-  const hqLabel = new Text({ text: 'HQ', style: { fill: 0x9fd6ff, fontSize: 12, fontFamily: 'Segoe UI', fontWeight: '600' } });
-  hqLabel.anchor.set(0.5, 0); hqLabel.y = 20; hq.addChild(hqLabel);
-  hoverable(hq, '<div class="t-name">Headquarters</div><div class="t-tags">deposit point</div>');
+  // ---------- HQ ----------
+  const hq = new THREE.Group(); hq.position.copy(HQ); scene.add(hq);
+  const hqMesh = new THREE.Mesh(new THREE.OctahedronGeometry(14),
+    new THREE.MeshStandardMaterial({ color: 0x9fd6ff, emissive: 0x2a6ea0, emissiveIntensity: 0.6, metalness: 0.6, roughness: 0.3 }));
+  hq.add(hqMesh);
+  hq.add(new THREE.Mesh(new THREE.TorusGeometry(22, 1.2, 8, 48),
+    new THREE.MeshBasicMaterial({ color: 0x5ec8ff }))).rotation.x = Math.PI / 2;
+  mkLabel('HQ', hq, 26, 'world-label hq');
 
-  // ---------- asteroid belt (alive: drifting rocks) ----------
-  const BELT_R = 460;
-  const belt: { g: Graphics; angle: number; r: number; speed: number; spin: number }[] = [];
-  const beltLayer = new Container(); world.addChild(beltLayer);
-  for (let i = 0; i < 160; i++) {
-    const r = BELT_R + (Math.random() - 0.5) * 70;
-    const s = 1.2 + Math.random() * 2.6;
-    const g = new Graphics().poly([-s, -s * 0.7, s * 0.8, -s, s, s * 0.6, -s * 0.5, s]).fill({ color: 0x6b6256 });
-    beltLayer.addChild(g);
-    belt.push({ g, angle: Math.random() * Math.PI * 2, r, speed: 0.01 + Math.random() * 0.006, spin: (Math.random() - 0.5) * 2 });
-  }
-  // two mineable asteroid clusters embedded in the belt
+  // ---------- asteroid belt ----------
+  addBelt(scene);
   for (const [frac, res] of [[0.2, 'ore'], [0.65, 'crystal']] as const) {
-    const c = new Container(); world.addChild(c);
-    const node = { c, angle: frac * Math.PI * 2, r: BELT_R, speed: 0.013 };
-    belt.push({ g: c as any, angle: node.angle, r: node.r, speed: node.speed, spin: 0 });
-    const col = res === 'ore' ? 0xb98a5a : 0x9be8ff;
-    const gg = new Graphics();
-    for (let k = 0; k < 5; k++) { const a = (k / 5) * 7, rr = 5 + Math.random() * 4; gg.circle(Math.cos(a) * 7, Math.sin(a) * 7, rr).fill({ color: 0x7a6f60 }); }
-    gg.circle(0, 0, 5).fill({ color: col });
-    c.addChild(gg);
-    const mt: MineTarget = { name: res === 'ore' ? 'Ore Field' : 'Crystal Field', resource: res, radius: 16, pos: () => worldPos(c) };
-    mineTargets.push(mt); hoverable(gg, `<div class="t-name">${mt.name}</div><div class="t-tags">${RESOURCE_LABEL[res]}</div>`); bindMine(gg, mt);
+    const a = frac * Math.PI * 2, r = 462;
+    const cluster = new THREE.Mesh(new THREE.IcosahedronGeometry(9, 0),
+      new THREE.MeshStandardMaterial({ color: res === 'ore' ? 0xb98a5a : 0x9be8ff, emissive: res === 'ore' ? 0x3a2a14 : 0x184a55, roughness: 0.8, metalness: 0.2, flatShading: true }));
+    cluster.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); scene.add(cluster);
+    const mt: MineTarget = { name: res === 'ore' ? 'Ore Field' : 'Crystal Field', resource: res, radius: 16, pos: () => cluster.position.clone() };
+    mineTargets.push(mt); (cluster.userData as any).mine = mt;
+    hoverMeshes.push({ mesh: cluster, html: `<div class="t-name">${mt.name}</div><div class="t-tags">${RESOURCE_LABEL[res]}</div>` });
   }
 
-  // ---------- comets (eccentric orbits with tails pointing away from the star) ----------
-  const comets: { c: Container; tail: Sprite; rx: number; ry: number; angle: number; speed: number }[] = [];
-  for (const [rx, ry, sp, ph] of [[680, 920, 0.10, 0], [1080, 760, 0.07, 2.2]] as const) {
-    const c = new Container(); world.addChild(c);
-    const tail = new Sprite(GLOW); tail.anchor.set(1, 0.5); tail.tint = 0x9fe8ff; tail.blendMode = 'add';
-    tail.width = 150; tail.height = 26; c.addChild(tail);
-    c.addChild(new Graphics().circle(0, 0, 3.5).fill({ color: 0xddfbff }));
-    comets.push({ c, tail, rx, ry, angle: ph, speed: sp });
-  }
+  // ---------- comets (highly eccentric Keplerian orbits, tails pointing away from the sun) ----------
+  const comets = buildComets(scene);
 
-  // mining/attack beam layer (over planets, under ships)
-  const fx = new Graphics(); world.addChild(fx);
+  // ---------- fleet (glTF ships) ----------
+  const loader = new GLTFLoader();
+  const discGeo = new THREE.RingGeometry(16, 19, 48);
+  const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
+  await Promise.all(FACTIONS.map(async (def, i) => {
+    let obj: THREE.Object3D;
+    try {
+      const gltf = await loader.loadAsync(`${BASE}models/${def.id}.glb`);
+      obj = gltf.scene;
+      // normalize size: scale longest bbox axis to ~24 units
+      const box = new THREE.Box3().setFromObject(obj); const size = new THREE.Vector3(); box.getSize(size);
+      const s = 24 / Math.max(size.x, size.y, size.z); obj.scale.setScalar(s);
+      obj.traverse((o: any) => { if (o.isMesh && o.material) { o.material.envMapIntensity = 0.9; } });
+    } catch (e) {
+      obj = new THREE.Mesh(new THREE.ConeGeometry(6, 18, 6), new THREE.MeshStandardMaterial({ color: def.color }));
+      console.error('ship load', def.id, e);
+    }
+    const holder = new THREE.Group(); holder.add(obj);
+    const start = { x: HQ.x + (i - 3.5) * 34, z: HQ.z + (i % 2 ? 26 : 54) };
+    holder.position.set(start.x, SHIP_Y, start.z); scene.add(holder);
+    (holder.userData as any).shipIndex = i;
 
-  // ---------- fleet ----------
-  function buildFleet() {
-    const albUrls: string[] = [], nrmUrls: string[] = [];
-    for (const def of FACTIONS) for (let k = 0; k < ANGLES; k++) { albUrls.push(frameUrl(def.id, k)); nrmUrls.push(normalUrl(def.id, k)); }
-    ships = FACTIONS.map((def, i) => {
-      const albedo = Array.from({ length: ANGLES }, () => PLACEHOLDER);   // populated by Assets.load below
-      const normals = Array.from({ length: ANGLES }, () => FLAT_N);
-      const shader = Shader.from({ gl: { vertex: shipVert, fragment: shipFrag }, resources: {
-        uAlbedo: PLACEHOLDER.source, uNormal: FLAT_N.source,
-        lightUniforms: {
-          uLight: { value: [0, 0, 1], type: 'vec3<f32>' },
-          uResid: { value: 0, type: 'f32' },
-          uStrength: { value: 0, type: 'f32' },          // 0 until normals load → pure albedo
-          uBias: { value: SHIP_LIGHT_BIAS, type: 'f32' },
-        },
-      } });
-      const mesh = new Mesh({ geometry: shipGeometry(), shader }); mesh.scale.set(SHIP_SCALE);
-      // selection indicator: a planar disc lying on the orbital plane (squashed by ISO)
-      const disc = new Graphics()
-        .ellipse(0, 0, SEL_R, SEL_R * ISO).fill({ color: 0x5ec8ff, alpha: 0.16 })
-        .ellipse(0, 0, SEL_R, SEL_R * ISO).stroke({ width: 1.5, color: 0x7fdcff, alpha: 0.85 });
-      disc.visible = false;
-      const icon = new Graphics(); icon.y = -22; icon.visible = false;  // action indicator above the ship
-      const sc = new Container(); const start: Vec = { x: HQ.x + (i - 3.5) * 34, y: HQ.y + (i % 2 ? 26 : 54) };
-      sc.x = start.x; sc.y = start.y; sc.addChild(disc, mesh, icon); world.addChild(sc);
-      // click the ship to select it — tight elliptical hit area on the orbital plane
-      sc.eventMode = 'static'; sc.cursor = 'pointer'; sc.hitArea = new Circle(0, 0, SHIP_HIT_R);
-      sc.on('pointertap', (e) => { e.stopPropagation(); selectShip(i); });
-      return { def, mesh, shader, albedo, normals, disc, icon, sc, pos: { ...start }, state: 'idle' as const, moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0 };
-    });
-    buildToolbar();
-    // Stream textures in the background (Texture.from alone doesn't fetch reliably in v8).
-    // Use the record returned by Assets.load — keyed by the exact url, no cache-id mismatch.
-    Assets.load(albUrls).then((rec: Record<string, Texture>) => {
-      for (const s of ships) s.albedo = Array.from({ length: ANGLES }, (_, k) => rec[frameUrl(s.def.id, k)] ?? s.albedo[k]);
-    }).catch((e) => console.error('albedo load', e));
-    Assets.load(nrmUrls).then((rec: Record<string, Texture>) => {
-      for (const s of ships) {
-        s.normals = Array.from({ length: ANGLES }, (_, k) => rec[normalUrl(s.def.id, k)] ?? FLAT_N);
-        s.shader.resources.lightUniforms.uniforms.uStrength = SHIP_LIGHT_STR;   // enable normal lighting
-      }
-    }).catch((e) => console.error('normal load', e));
-  }
+    const disc = new THREE.Mesh(discGeo, new THREE.MeshBasicMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+    disc.rotation.x = -Math.PI / 2; disc.position.set(start.x, 1, start.z); disc.visible = false; scene.add(disc);
+    const beam = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
+    beam.visible = false; scene.add(beam);
 
-  // ---------- input ----------
-  let dn = false, mv = false, sx = 0, sy = 0, lx = 0, ly = 0;
-  bg.on('pointerdown', (e) => { dn = true; mv = false; sx = lx = e.global.x; sy = ly = e.global.y; });
-  bg.on('pointermove', (e) => {
-    if (!dn) return;
-    if (Math.abs(e.global.x - sx) + Math.abs(e.global.y - sy) > 6) mv = true;
-    if (mv) { world.x += e.global.x - lx; world.y += e.global.y - ly; }
-    lx = e.global.x; ly = e.global.y;
+    ships[i] = { def, obj: holder, disc, beam, pos: { ...start }, heading: 0, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null };
+  }));
+
+  // ---------- raycasting: select ships / move / mine ----------
+  const ray = new THREE.Raycaster();
+  const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const ndc = new THREE.Vector2();
+  let downX = 0, downY = 0;
+  renderer.domElement.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; });
+  renderer.domElement.addEventListener('pointerup', (e) => {
+    if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6) return;   // was a camera drag
+    ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    // 1) ship?
+    const shipHits = ray.intersectObjects(ships.map((s) => s.obj), true);
+    if (shipHits.length) { let o: THREE.Object3D | null = shipHits[0].object; while (o && (o.userData as any).shipIndex === undefined) o = o.parent; if (o) { selectShip((o.userData as any).shipIndex); return; } }
+    // 2) mine target?
+    const mineHits = ray.intersectObjects(mineTargets.length ? hoverMeshes.map((h) => h.mesh) : [], true);
+    let mh: THREE.Object3D | null = mineHits[0]?.object ?? null;
+    while (mh && !(mh.userData as any).mine) mh = mh.parent;
+    const s = ships[selected];
+    if (mh && (mh.userData as any).mine && s) { s.mine = (mh.userData as any).mine; s.moveTo = null; s.state = 'moving'; flashHint(`${s.def.name} → mining ${s.mine!.name}`); return; }
+    // 3) empty space → move on the plane
+    const hit = new THREE.Vector3();
+    if (s && ray.ray.intersectPlane(ground, hit)) { s.moveTo = { x: hit.x, z: hit.z }; s.mine = null; s.state = 'moving'; flashHint(`${s.def.name} → moving`); }
   });
-  bg.on('pointerup', (e) => {
-    dn = false; if (mv) return;
-    const s = ships[selected]; if (!s) return;
-    const p = world.toLocal(e.global); s.moveTo = { x: p.x, y: p.y }; s.mine = null; s.state = 'moving';
-    flashHint(`${s.def.name} → moving`);
-  });
-  app.canvas.addEventListener('wheel', (ev) => {
-    ev.preventDefault();
-    const f = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-    const before = world.toLocal({ x: ev.offsetX, y: ev.offsetY } as any);
-    world.scale.x = world.scale.y = Math.min(2.2, Math.max(0.2, world.scale.x * f));
-    const after = world.toLocal({ x: ev.offsetX, y: ev.offsetY } as any);
-    world.x += (after.x - before.x) * world.scale.x; world.y += (after.y - before.y) * world.scale.y;
-  }, { passive: false });
 
   // ---------- HUD ----------
-  const fleetEl = document.getElementById('fleet')!;
-  const resEl = document.getElementById('resources')!;
+  const tip = document.getElementById('tooltip')!;
   const hintEl = document.getElementById('hint')!;
-  const recallBtn = document.createElement('button');
-  recallBtn.className = 'recall'; recallBtn.textContent = 'Recall ship'; document.body.appendChild(recallBtn);
-  recallBtn.onclick = () => { const s = ships[selected]; if (!s) return; s.mine = null; s.moveTo = { ...HQ }; s.state = 'returning'; flashHint(`${s.def.name} → recalled to HQ`); };
+  const resEl = document.getElementById('resources')!;
+  const fleetEl = document.getElementById('fleet')!;
+  const recallBtn = document.createElement('button'); recallBtn.className = 'recall'; recallBtn.textContent = 'Recall ship';
+  document.body.appendChild(recallBtn);
+  recallBtn.onclick = () => { const s = ships[selected]; if (!s) return; s.mine = null; s.moveTo = { x: HQ.x, z: HQ.z }; s.state = 'returning'; flashHint(`${s.def.name} → recalled to HQ`); };
   let hintTimer = 0;
-  const DEFAULT_HINT = 'Click a ship in the fleet bar, then click a planet/moon/gas node to mine, or empty space to move.';
+  const DEFAULT_HINT = 'Drag to orbit · scroll to zoom · click a ship to select, then click a planet/node to mine or empty space to move.';
   function flashHint(m: string) { hintEl.textContent = m; hintTimer = 3; }
-  function selectShip(i: number) {
-    selected = i;
-    [...fleetEl.children].forEach((c, j) => c.classList.toggle('selected', j === selected));
-    const s = ships[i]; if (s) flashHint(`${s.def.name} selected`);
-  }
+  function selectShip(i: number) { selected = i; [...fleetEl.children].forEach((c, j) => c.classList.toggle('selected', j === selected)); const s = ships[i]; if (s) flashHint(`${s.def.name} selected`); }
   function buildToolbar() {
     fleetEl.innerHTML = '';
     ships.forEach((s, i) => {
-      const b = document.createElement('div');
-      b.className = 'ship-btn' + (i === selected ? ' selected' : '');
-      b.innerHTML = `<img src="${frameUrl(s.def.id, 0)}" alt=""><div class="s-name">${s.def.name}</div><div class="s-stat" data-i="${i}">idle</div>`;
-      b.onclick = () => selectShip(i);
-      fleetEl.appendChild(b);
+      const b = document.createElement('div'); b.className = 'ship-btn' + (i === selected ? ' selected' : '');
+      b.innerHTML = `<img src="${BASE}sprites/${s.def.id}_y000.png" alt=""><div class="s-name">${s.def.name}</div><div class="s-stat" data-i="${i}">idle</div>`;
+      b.onclick = () => selectShip(i); fleetEl.appendChild(b);
     });
   }
   function updateHud() {
     [...fleetEl.querySelectorAll('.s-stat')].forEach((el) => {
       const i = +(el as HTMLElement).dataset.i!; const s = ships[i]; if (!s) return;
-      const cls = s.state === 'mining' ? 'mining' : s.state === 'returning' ? 'returning' : s.state === 'moving' ? 'moving' : '';
-      el.className = 's-stat ' + cls;
+      el.className = 's-stat ' + (s.state === 'mining' ? 'mining' : s.state === 'returning' ? 'returning' : s.state === 'moving' ? 'moving' : '');
       el.textContent = s.state === 'mining' ? `mining ${Math.round(s.cargo)}%` : s.state;
     });
-    const rows = (Object.keys(resources) as ResourceTag[])
+    resEl.innerHTML = `<h3>HQ Stores</h3>` + (Object.keys(resources) as ResourceTag[])
       .map((k) => `<div class="res-row"><span class="k">${RESOURCE_LABEL[k]}</span><span class="v">${Math.floor(resources[k])}</span></div>`).join('');
-    resEl.innerHTML = `<h3>HQ Stores</h3>${rows}`;
     recallBtn.disabled = !ships[selected];
   }
-  window.addEventListener('pointermove', (e) => { tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px'; });
+  window.addEventListener('pointermove', (e) => {
+    tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px';
+    ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hits = ray.intersectObjects(hoverMeshes.map((h) => h.mesh), true);
+    if (hits.length) { let o: THREE.Object3D | null = hits[0].object; const found = hoverMeshes.find((h) => { let x: THREE.Object3D | null = o; while (x) { if (x === h.mesh) return true; x = x.parent; } return false; }); if (found) { tip.innerHTML = found.html; tip.hidden = false; return; } }
+    tip.hidden = true;
+  });
 
-  // ---------- camera ----------
-  function fitCamera() { world.scale.set(Math.min(app.screen.width, app.screen.height) / 2520); world.x = app.screen.width / 2; world.y = app.screen.height / 2; }
-  function onResize() {
-    sizeBg();
-    buildBackground();
-    fitCamera();
-  }
-  window.addEventListener('resize', onResize);
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
 
   // ---------- loop ----------
-  let T = 0;
-  function step(dt: number) {
-    T += dt;
-    for (const o of orbiters) { o.angle += o.speed * dt; o.c.x = Math.cos(o.angle) * o.orbit; o.c.y = Math.sin(o.angle) * o.orbit * ISO; }
-    for (const s of spinners) { s.angle += s.speed * dt; s.c.x = s.parent.x + Math.cos(s.angle) * s.dist; s.c.y = s.parent.y + Math.sin(s.angle) * s.dist * ISO; }
-    for (const b of shaded) b.spr.rotation = Math.atan2(-b.c.y / ISO, -b.c.x) - TEX_LIGHT_ANGLE;
-    for (const r of belt) { r.angle += r.speed * dt; r.g.x = Math.cos(r.angle) * r.r; r.g.y = Math.sin(r.angle) * r.r * ISO; r.g.rotation += r.spin * dt; }
-    for (const cm of comets) {
-      cm.angle += cm.speed * dt;
-      cm.c.x = Math.cos(cm.angle) * cm.rx; cm.c.y = Math.sin(cm.angle) * cm.ry * ISO;
-      cm.tail.rotation = Math.atan2(cm.c.y, cm.c.x);  // tail points away from the star
-    }
+  const clock = new THREE.Clock();
+  const tmp = new THREE.Vector3();
+  let hudAcc = 0;
+  function frame() {
+    const dt = Math.min(0.05, clock.getDelta()); const T = clock.elapsedTime;
+    controls.update();
+    (star as any).__glow.uniforms.uViewPos.value.copy(camera.position);
+
+    for (const o of orbiters) { o.angle += o.speed * dt; o.group.position.set(Math.cos(o.angle) * o.orbit, 0, Math.sin(o.angle) * o.orbit); o.planet.update(dt, camera.position); }
+    for (const s of spinners) { s.angle += s.speed * dt; s.group.position.set(s.parent.position.x + Math.cos(s.angle) * s.dist, 0, s.parent.position.z + Math.sin(s.angle) * s.dist); s.planet.update(dt, camera.position); }
+
+    for (const cm of comets) cm.update(dt);
 
     const pulse = 0.55 + 0.45 * Math.sin(T * 6);
-    fx.clear();
     for (const s of ships) {
+      if (!s) continue;
       let desired = s.heading;
+      s.beam.visible = false;
       if (s.state === 'mining' && s.mine) {
-        // smoothly hug the (orbiting) body and stay synced as it moves
-        const bp = s.mine.pos();
-        let dx = s.pos.x - bp.x, dy = s.pos.y - bp.y; const len = Math.hypot(dx, dy) || 1;
-        const rad = s.mine.radius + 14;
-        const k = 1 - Math.exp(-9 * dt);
-        s.pos.x += (bp.x + dx / len * rad - s.pos.x) * k;
-        s.pos.y += (bp.y + dy / len * rad - s.pos.y) * k;
-        desired = Math.atan2(bp.x - s.pos.x, -(bp.y - s.pos.y));
+        const bp = s.mine.pos(); const d = new THREE.Vector2(s.pos.x - bp.x, s.pos.z - bp.z); const len = d.length() || 1;
+        const rad = s.mine.radius + 16; const k = 1 - Math.exp(-9 * dt);
+        s.pos.x += (bp.x + d.x / len * rad - s.pos.x) * k; s.pos.z += (bp.z + d.y / len * rad - s.pos.z) * k;
+        desired = Math.atan2(bp.x - s.pos.x, bp.z - s.pos.z);
         s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP, s.cargo + MINE_RATE * dt);
         if (s.cargo >= CARGO_CAP) s.state = 'returning';
-        // mining beam
-        fx.moveTo(s.pos.x, s.pos.y).lineTo(bp.x, bp.y).stroke({ width: 2, color: RES_COLOR[s.mine.resource], alpha: 0.35 + 0.35 * pulse });
-        fx.circle(bp.x, bp.y, 4 + 2 * pulse).fill({ color: RES_COLOR[s.mine.resource], alpha: 0.5 });
+        drawBeam(s, bp, pulse);
       } else {
-        const dest: Vec | null = s.state === 'returning' ? { ...HQ } : s.state === 'moving' ? (s.mine ? s.mine.pos() : s.moveTo) : null;
+        const dest: Vec | null = s.state === 'returning' ? { x: HQ.x, z: HQ.z } : s.state === 'moving' ? (s.mine ? vecOf(s.mine.pos()) : s.moveTo) : null;
         if (dest) {
-          const dx = dest.x - s.pos.x, dy = dest.y - s.pos.y, d = Math.hypot(dx, dy);
-          const arriveR = s.mine ? s.mine.radius + 14 : (s.state === 'returning' ? 22 : 4);
-          if (d > arriveR) { const k = Math.min(1, SHIP_SPEED * dt / d); s.pos.x += dx * k; s.pos.y += dy * k; desired = Math.atan2(dx, -dy); }
+          const dx = dest.x - s.pos.x, dz = dest.z - s.pos.z, dd = Math.hypot(dx, dz);
+          const arriveR = s.mine ? s.mine.radius + 16 : (s.state === 'returning' ? 22 : 6);
+          if (dd > arriveR) { const k = Math.min(1, SHIP_SPEED * dt / dd); s.pos.x += dx * k; s.pos.z += dz * k; desired = Math.atan2(dx, dz); }
           else if (s.state === 'moving') s.state = s.mine ? 'mining' : 'idle';
           else if (s.state === 'returning') { if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; } s.state = 'idle'; s.moveTo = null; }
         }
       }
       if (s.state === 'idle' && s.mine && s.cargo === 0) s.state = 'moving';
-
-      // smooth turn toward desired heading (fills the gap between the 24 frames)
+      // smooth turn (glTF nose = -Z after Y-up export → face heading about Y)
       s.heading += Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, angWrap(desired - s.heading)));
-      const idx = ((Math.round((s.heading * 180 / Math.PI) / 15) % ANGLES) + ANGLES) % ANGLES;
-      const resid = angWrap(s.heading - idx * 15 * Math.PI / 180);   // residual → continuous spin
-      s.mesh.rotation = resid;
-      const alb = s.albedo[idx] ?? s.albedo[0], nrm = s.normals[idx] ?? FLAT_N;
-      if (alb) s.shader.resources.uAlbedo = alb.source;
-      s.shader.resources.uNormal = nrm.source;
-      // light each ship from the central star, in screen space (y-up), spin-compensated
-      const u = s.shader.resources.lightUniforms.uniforms;
-      const len = Math.hypot(s.pos.x, s.pos.y) || 1;
-      u.uLight = [-s.pos.x / len, s.pos.y / len, SHIP_LIGHT_Z];   // ship→star; flip y (screen→y-up)
-      u.uResid = -resid;
-
-      // action indicator
-      if (s.state === 'mining' && s.mine) {
-        s.icon.visible = true; s.icon.clear();
-        s.icon.circle(0, 0, 4 + pulse).stroke({ width: 1.5, color: RES_COLOR[s.mine.resource], alpha: 0.9 });
-        s.icon.circle(0, 0, 1.5).fill({ color: RES_COLOR[s.mine.resource] });
-      } else s.icon.visible = false;
-
-      s.sc.x = s.pos.x; s.sc.y = s.pos.y; s.disc.visible = (ships[selected] === s);
+      s.obj.position.set(s.pos.x, SHIP_Y, s.pos.z); s.obj.rotation.y = -s.heading;
+      s.disc.visible = ships[selected] === s;
+      if (s.disc.visible) { s.disc.position.set(s.pos.x, 1, s.pos.z); (s.disc.material as THREE.MeshBasicMaterial).opacity = 0.6 + 0.4 * pulse; }
     }
-  }
 
-  let hudAcc = 0;
-  app.ticker.add((t) => {
-    const dt = Math.min(0.05, t.deltaMS / 1000);
-    step(dt);
+    // billboard HTML labels
+    for (const L of labels) {
+      L.obj.getWorldPosition(tmp); tmp.y += L.off; tmp.project(camera);
+      const vis = tmp.z < 1;
+      L.el.style.display = vis ? 'block' : 'none';
+      if (vis) { L.el.style.left = (tmp.x * 0.5 + 0.5) * innerWidth + 'px'; L.el.style.top = (-tmp.y * 0.5 + 0.5) * innerHeight + 'px'; }
+    }
+
     hudAcc += dt; if (hudAcc > 0.15) { updateHud(); hudAcc = 0; }
     if (hintTimer > 0) { hintTimer -= dt; if (hintTimer <= 0) hintEl.textContent = DEFAULT_HINT; }
-  });
-
-  sizeBg();
-  buildFleet();
-  onResize();
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  hintEl.textContent = DEFAULT_HINT;
+  buildToolbar();
   updateHud();
-  (window as any).__game = { ships, mineTargets, world };  // debug/test handle
+  frame();
+  (window as any).__game = { ships, mineTargets, scene, camera, controls };
   (window as any).__ready = true;
+
+  // ---- helpers that need beam geometry ----
+  function drawBeam(s: Ship, bp: THREE.Vector3, pulse: number) {
+    const a = new THREE.Vector3(s.pos.x, SHIP_Y, s.pos.z); const b = bp.clone();
+    const mid = a.clone().add(b).multiplyScalar(0.5); const len = a.distanceTo(b);
+    s.beam.position.copy(mid); s.beam.scale.set(1.2, len, 1.2);
+    s.beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    (s.beam.material as THREE.MeshBasicMaterial).color.setHex(RES_COLOR[s.mine!.resource]);
+    (s.beam.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.35 * pulse;
+    s.beam.visible = true;
+  }
+}
+
+const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+const vecOf = (v: THREE.Vector3): Vec => ({ x: v.x, z: v.z });
+
+function addOrbitRing(scene: THREE.Scene, r: number) {
+  const seg = 128; const pts: THREE.Vector3[] = [];
+  for (let i = 0; i <= seg; i++) { const a = (i / seg) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)); }
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x2a3c54, transparent: true, opacity: 0.5 }));
+  scene.add(line);
+}
+
+function addRings(g: THREE.Group, size: number, color: number) {
+  const ring = new THREE.Mesh(new THREE.RingGeometry(size * 1.4, size * 2.2, 80),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2 + 0.35; g.add(ring);
+}
+
+function addBelt(scene: THREE.Scene) {
+  const N = 700; const geo = new THREE.DodecahedronGeometry(1, 0);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x6b6256, roughness: 0.95, flatShading: true });
+  const mesh = new THREE.InstancedMesh(geo, mat, N); const m = new THREE.Matrix4(); const q = new THREE.Quaternion();
+  for (let i = 0; i < N; i++) {
+    const a = Math.random() * Math.PI * 2; const r = 462 + (Math.random() - 0.5) * 80;
+    const s = 1 + Math.random() * 3;
+    q.setFromEuler(new THREE.Euler(Math.random() * 6, Math.random() * 6, Math.random() * 6));
+    m.compose(new THREE.Vector3(Math.cos(a) * r, (Math.random() - 0.5) * 10, Math.sin(a) * r), q, new THREE.Vector3(s, s, s));
+    mesh.setMatrixAt(i, m);
+  }
+  scene.add(mesh);
+}
+
+function buildStars(scene: THREE.Scene) {
+  const N = 3500; const pos = new Float32Array(N * 3); const col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(8000 + Math.random() * 4000);
+    pos.set([v.x, v.y, v.z], i * 3);
+    const t = Math.random(); const c = new THREE.Color().setHSL(0.6, 0.3, 0.6 + t * 0.4);
+    if (Math.random() < 0.1) c.setHSL(0.08, 0.5, 0.7);
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: 18, sizeAttenuation: true, vertexColors: true, transparent: true })));
+}
+
+function buildNebula(scene: THREE.Scene) {
+  const c = document.createElement('canvas'); c.width = c.height = 2048; const x = c.getContext('2d')!;
+  x.fillStyle = '#03040a'; x.fillRect(0, 0, 2048, 2048); x.globalCompositeOperation = 'lighter';
+  const cols = ['#3a1f7a', '#5a1f5a', '#143f63', '#1d2f6a', '#4a2a6a'];   // deep, desaturated
+  for (let i = 0; i < 60; i++) {
+    const cx = Math.random() * 2048, cy = Math.random() * 2048, r = 160 + Math.random() * 520;
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, r); const col = cols[(Math.random() * cols.length) | 0];
+    g.addColorStop(0, col + '20'); g.addColorStop(0.5, col + '0c'); g.addColorStop(1, col + '00');
+    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill();
+  }
+  // faint star dust baked into the dome
+  for (let i = 0; i < 1200; i++) { x.fillStyle = `rgba(255,255,255,${Math.random() * 0.15})`; x.fillRect(Math.random() * 2048, Math.random() * 2048, 1, 1); }
+  const tex = new THREE.CanvasTexture(c);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(11000, 48, 32),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, depthWrite: false, transparent: true, opacity: 0.55 }));
+  scene.add(dome);
+}
+
+interface Comet { update(dt: number): void; }
+function buildComets(scene: THREE.Scene): Comet[] {
+  const out: Comet[] = [];
+  const defs = [{ a: 760, e: 0.82, phi: 0.5, sp: 0.22, M: 0 }, { a: 1050, e: 0.88, phi: 2.4, sp: 0.16, M: 1.6 }];
+  for (const d of defs) {
+    const grp = new THREE.Group(); scene.add(grp);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(4, 16, 12), new THREE.MeshBasicMaterial({ color: 0xddfbff }));
+    grp.add(head);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(9, 70, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x8fd4ff, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }));
+    grp.add(tail);
+    let M = d.M;
+    out.push({
+      update(dt) {
+        M += d.sp * dt; let E = M;
+        for (let i = 0; i < 5; i++) E -= (E - d.e * Math.sin(E) - M) / (1 - d.e * Math.cos(E));
+        const a = d.a, b = a * Math.sqrt(1 - d.e * d.e);
+        const px = a * (Math.cos(E) - d.e), py = b * Math.sin(E);
+        const cs = Math.cos(d.phi), sn = Math.sin(d.phi);
+        const wx = px * cs - py * sn, wz = px * sn + py * cs;
+        grp.position.set(wx, 0, wz);
+        const away = new THREE.Vector3(wx, 0, wz).normalize();      // away from the sun (origin)
+        tail.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), away);
+        const r = Math.hypot(wx, wz);
+        const near = Math.max(0, 1 - (r - a * (1 - d.e)) / (a * 2 * d.e));   // longer/brighter near the sun
+        tail.scale.set(0.7 + near * 0.4, 0.5 + near * 1.1, 0.7 + near * 0.4);
+        tail.position.copy(away).multiplyScalar(35 * tail.scale.y);   // base near the head, streams outward
+        (tail.material as THREE.MeshBasicMaterial).opacity = 0.06 + 0.2 * near;
+      },
+    });
+  }
+  return out;
 }
