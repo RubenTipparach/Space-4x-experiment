@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 260" width="240" height="260">
+  <defs>
+    <linearGradient id="hullA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#33371f"/>
+      <stop offset="0.55" stop-color="#5c6645"/>
+      <stop offset="1" stop-color="#33371f"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#9be84a" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#9be84a" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#9be84a" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softA" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="104" cy="236" r="17" fill="url(#glowA)"/><circle cx="104" cy="236" r="8" fill="#9be84a" filter="url(#softA)"/><circle cx="148" cy="236" r="17" fill="url(#glowA)"/><circle cx="148" cy="236" r="8" fill="#9be84a" filter="url(#softA)"/>
+    <!-- swept wings (slightly asymmetric) -->
+    <path d="M118 120 L34 150 L40 176 L118 162 Z" fill="url(#hullA)" stroke="#d7822e" stroke-width="1.5"/>
+    <path d="M122 116 L210 154 L202 182 L122 160 Z" fill="url(#hullA)" stroke="#d7822e" stroke-width="1.5"/>
+    <!-- fuselage -->
+    <path d="M120 28 L138 96 L150 226 L90 226 L102 96 Z" fill="url(#hullA)" stroke="#d7822e" stroke-width="2"/>
+    <!-- rebel accent stripe + patch panel -->
+    <path d="M120 40 L130 96 L110 96 Z" fill="#9be84a" opacity="0.85"/>
+    <rect x="104" y="150" width="32" height="5" fill="#d7822e"/>
+    <rect x="106" y="120" width="16" height="22" fill="#33371f" stroke="#d7822e" stroke-width="1"/>
+    <!-- wingtip cannons -->
+    <rect x="36" y="140" width="4" height="20" fill="#d7822e"/>
+    <rect x="204" y="146" width="4" height="20" fill="#d7822e"/>
+    
+  </g>
+</svg>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stellar Frontier — Vertical Slice</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="game"></div>
+
+    <!-- HUD: HQ resources -->
+    <div id="resources" class="panel"></div>
+
+    <!-- HUD: hint / selected ship -->
+    <div id="hint" class="hint">Click a ship in the fleet bar, then click a planet/moon/gas node to mine, or empty space to move.</div>
+
+    <!-- HUD: hover tooltip -->
+    <div id="tooltip" class="tooltip" hidden></div>
+
+    <!-- HUD: fleet toolbar (bottom-middle) -->
+    <div id="fleet" class="fleet"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

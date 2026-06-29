@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 260" width="240" height="260">
+  <defs>
+    <linearGradient id="hullT" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5e3417"/>
+      <stop offset="0.55" stop-color="#9c5a2c"/>
+      <stop offset="1" stop-color="#5e3417"/>
+    </linearGradient>
+    <radialGradient id="glowT" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff8a3c" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#ff8a3c" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ff8a3c" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softT" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="96" cy="240" r="19" fill="url(#glowT)"/><circle cx="96" cy="240" r="9" fill="#ff8a3c" filter="url(#softT)"/><circle cx="150" cy="240" r="19" fill="url(#glowT)"/><circle cx="150" cy="240" r="9" fill="#ff8a3c" filter="url(#softT)"/>
+    <!-- twin engine blocks -->
+    <rect x="84" y="196" width="26" height="40" rx="3" fill="#5e3417" stroke="#caa45a" stroke-width="1.5"/>
+    <rect x="136" y="196" width="26" height="40" rx="3" fill="#5e3417" stroke="#caa45a" stroke-width="1.5"/>
+    <!-- main blocky hull, chamfered nose -->
+    <path d="M120 30 L150 64 L156 200 L84 200 L90 64 Z"
+          fill="url(#hullT)" stroke="#caa45a" stroke-width="2"/>
+    <!-- asymmetric salvage pod (left) + strut -->
+    <rect x="40" y="120" width="34" height="56" rx="3" fill="#5e3417" stroke="#caa45a" stroke-width="1.5"/>
+    <path d="M74 138 L90 130 M74 162 L90 156" stroke="#caa45a" stroke-width="4"/>
+    <!-- antenna mast (right) -->
+    <path d="M150 96 L186 80" stroke="#caa45a" stroke-width="3"/>
+    <circle cx="186" cy="80" r="4" fill="#ff8a3c"/>
+    <!-- cockpit + rivets / weathered panels -->
+    <path d="M120 50 L132 70 L108 70 Z" fill="#ff8a3c" opacity="0.85"/>
+    <g fill="#caa45a">
+      <rect x="100" y="92" width="40" height="3"/><rect x="100" y="120" width="40" height="3"/>
+      <rect x="100" y="150" width="40" height="3"/>
+      <circle cx="98" cy="86" r="2"/><circle cx="142" cy="86" r="2"/>
+      <circle cx="98" cy="180" r="2"/><circle cx="142" cy="180" r="2"/>
+    </g>
+    <!-- gun barrels -->
+    <rect x="92" y="40" width="5" height="26" fill="#caa45a"/>
+    <rect x="143" y="40" width="5" height="26" fill="#caa45a"/>
+    
+  </g>
+</svg>

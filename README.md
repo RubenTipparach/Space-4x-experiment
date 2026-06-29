@@ -9,12 +9,29 @@ The world is **persistent and always simulating**: mining accrues, fleets travel
 and colonies grow whether or not you're online. Presented **top-down in 2D**, with
 new starships added on a regular cadence.
 
+## Play the vertical slice
+
+A client-only PixiJS slice of the solar-system view (fleet toolbar, click-to-move,
+mining → HQ, 15 planets with resource tags) lives in [`client/`](client/):
+
+```bash
+cd client && npm install && npm run dev   # http://localhost:5173
+```
+
+Ship art is 3D-modeled in Blender and rendered to sprites — see
+[`CLAUDE.md`](CLAUDE.md) and [`scripts/concept/`](scripts/concept/).
+
 ## Design
 
-The technical design — engine choice, rendering strategy, networking, backend,
-persistence, Discord, and the starship content pipeline — lives in:
-
-📄 **[docs/TECH_DESIGN.md](docs/TECH_DESIGN.md)**
+- 📄 **[docs/TECH_DESIGN.md](docs/TECH_DESIGN.md)** — engine choice, rendering
+  strategy, networking, backend, persistence, single-universe sharding, Discord, and
+  the starship content pipeline.
+- 📄 **[docs/GAME_DESIGN.md](docs/GAME_DESIGN.md)** — gameplay: resources (ore /
+  crystal / gas), mining, ship roles, deterministic reviewable combat, travel, and
+  the home-base core loop.
+- 📄 **[docs/FACTIONS_AND_ART.md](docs/FACTIONS_AND_ART.md)** — faction system (pick a
+  start faction, earn ships via reputation) and the SVG per-faction design-language
+  template & art pipeline.
 
 ### Headline decisions
 

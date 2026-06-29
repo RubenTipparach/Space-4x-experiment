@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 260" width="240" height="260">
+  <defs>
+    <linearGradient id="hullI" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#15111f"/>
+      <stop offset="0.55" stop-color="#2a2440"/>
+      <stop offset="1" stop-color="#15111f"/>
+    </linearGradient>
+    <radialGradient id="glowI" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#d24bff" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#d24bff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#d24bff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softI" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="120" cy="236" r="21" fill="url(#glowI)"/><circle cx="120" cy="236" r="10" fill="#d24bff" filter="url(#softI)"/>
+    <!-- swept wings -->
+    <path d="M120 110 L26 210 L60 212 L120 168 Z" fill="url(#hullI)" stroke="#7a5cff" stroke-width="1.5"/>
+    <path d="M120 110 L214 210 L180 212 L120 168 Z" fill="url(#hullI)" stroke="#7a5cff" stroke-width="1.5"/>
+    <!-- arrowhead fuselage -->
+    <path d="M120 24 L160 150 L120 214 L80 150 Z" fill="url(#hullI)" stroke="#7a5cff" stroke-width="2"/>
+    <!-- glowing spine -->
+    <path d="M120 40 L120 206" stroke="#d24bff" stroke-width="3" filter="url(#softI)" opacity="0.9"/>
+    <path d="M120 70 L96 150 M120 70 L144 150" stroke="#7a5cff" stroke-width="1.5" opacity="0.8"/>
+    <path d="M120 36 L150 150 L120 200 L90 150 Z" fill="none" stroke="#d24bff" stroke-width="1" opacity="0.5"/>
+    
+  </g>
+</svg>

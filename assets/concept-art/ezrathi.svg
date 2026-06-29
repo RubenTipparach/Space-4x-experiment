@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 260" width="240" height="260">
+  <defs>
+    <linearGradient id="hullE" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0810"/>
+      <stop offset="0.55" stop-color="#1a1622"/>
+      <stop offset="1" stop-color="#0a0810"/>
+    </linearGradient>
+    <radialGradient id="glowE" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8cff6b" stop-opacity="1"/>
+      <stop offset="0.6" stop-color="#8cff6b" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#8cff6b" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softE" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+  <g stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="120" cy="232" r="21" fill="url(#glowE)"/><circle cx="120" cy="232" r="10" fill="#a070ff" filter="url(#softE)"/>
+    <!-- floating monolith shards -->
+    <g fill="#0a0810" stroke="#6b3fa0" stroke-width="1">
+      <path d="M40 96 L58 86 L62 150 L46 158 Z"/>
+      <path d="M200 96 L182 86 L178 150 L194 158 Z"/>
+    </g>
+    <!-- sharp asymmetric blades -->
+    <path d="M120 150 L52 196 L88 168 L120 176 Z" fill="url(#hullE)" stroke="#6b3fa0" stroke-width="1.5"/>
+    <path d="M120 150 L196 188 L150 166 L120 176 Z" fill="url(#hullE)" stroke="#6b3fa0" stroke-width="1.5"/>
+    <!-- central obsidian hull -->
+    <path d="M120 22 L146 92 L132 210 L108 210 L94 92 Z" fill="url(#hullE)" stroke="#6b3fa0" stroke-width="2"/>
+    <!-- void rune core -->
+    <circle cx="120" cy="120" r="20" fill="url(#glowE)"/>
+    <path d="M120 104 L120 136 M106 112 L134 128 M134 112 L106 128" stroke="#8cff6b" stroke-width="2.5" filter="url(#softE)"/>
+    <path d="M120 40 L120 92" stroke="#8cff6b" stroke-width="2" opacity="0.7"/>
+    
+  </g>
+</svg>
