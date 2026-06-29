@@ -94,6 +94,29 @@ mining→HQ, and resource tags. Run: `cd client && npm install && npm run dev`. 
 `client/README.md`. Renderer is WebGL by default (`?r=webgpu` to opt in); headless
 software-GL can't init Pixi, so run it in a real browser.
 
+### Rendering game previews in the cloud (headless screenshots)
+
+The client can be screenshotted headlessly here (no GPU) — useful for verifying the
+slice from the sandbox:
+
+1. Build + serve: `npm --prefix client run build && npm --prefix client run preview`
+   (port 4173; start the preview with `run_in_background`, it must outlive the shell).
+2. Screenshot: `PW_PATH="$(npm root -g)/playwright" node scripts/concept/screenshot_client.mjs`
+   → writes `assets/sprites/slice.png`.
+
+How it works / gotchas (all already handled in the code):
+- Headless Chromium has no GPU, so the script forces **software GL** via
+  `--use-angle=swiftshader --enable-unsafe-swiftshader --ignore-gpu-blocklist --no-sandbox`.
+  PixiJS v8 renders fine on SwiftShader.
+- **Do NOT block boot on a bulk `Assets.load`** — that GPU-bound bulk decode hangs
+  under SwiftShader (and stalled real browsers too). The client uses lazy
+  `Texture.from(...)` so the scene/camera/HUD come up immediately; sprites stream in.
+- The client sets **`window.__ready = true`** at the end of boot; the screenshot
+  script waits on that before capturing. Keep that marker.
+- Minimal `new Application().init(...)` works headless — if a screenshot comes back
+  black, the bug is almost always app-side boot ordering (e.g. fitting the camera
+  only *after* an awaited load), not the renderer.
+
 ## Git / workflow
 
 - Develop on `claude/scifi-mmo-engine-research-e1h48o`; open draft PRs.

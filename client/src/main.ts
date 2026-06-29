@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Text, Texture, Assets } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
@@ -187,11 +187,9 @@ function bindMine(obj: Container, mt: MineTarget) {
 }
 
 // ---------- fleet ----------
-async function buildFleet() {
-  const urls: string[] = [];
-  for (const f of FACTIONS) for (let i = 0; i < ANGLES; i++) urls.push(frameUrl(f.id, i));
-  await Assets.load(urls);
-
+// Lazy textures (Texture.from loads each frame on demand and updates the sprite when
+// ready) — so the scene/camera/toolbar never block on a bulk asset load.
+function buildFleet() {
   ships = FACTIONS.map((def, i) => {
     const frames = Array.from({ length: ANGLES }, (_, k) => Texture.from(frameUrl(def.id, k)));
     const sprite = new Sprite(frames[0]); sprite.anchor.set(0.5); sprite.scale.set(SHIP_SCALE);
@@ -354,6 +352,8 @@ app.ticker.add((t) => {
   if (hintTimer > 0) { hintTimer -= dt; if (hintTimer <= 0) hintEl.textContent = 'Click a ship in the fleet bar, then click a planet/moon/gas node to mine, or empty space to move.'; }
 });
 
-await buildFleet();
+buildFleet();
 fitCamera();
 updateHud();
+window.addEventListener('resize', fitCamera);
+(window as any).__ready = true;
