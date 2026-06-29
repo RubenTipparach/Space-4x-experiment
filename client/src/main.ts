@@ -65,13 +65,13 @@ async function main() {
   controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };   // mobile: drag to pan, pinch to zoom
 
   // ---------- lighting (for the glTF ships; planets self-shade in their shaders) ----------
-  // The star is in the orbital plane, so its light grazes ship decks in a top-down view.
-  // Lift the key light well above the plane (still roughly over the star) so the sunlit
-  // side and the decks both read, and keep fill low so the direction actually shapes hulls.
-  const sunLight = new THREE.PointLight(0xfff2d8, 3.8, 0, 0); // decay 0 → reaches the whole system
-  sunLight.position.set(0, 650, 0);
+  // Light ships from the star itself (origin, in the orbital plane) so their sunlit side
+  // matches the planets' terminator. A slight lift keeps decks from going fully flat
+  // without breaking that consistency; low fill keeps the direction readable.
+  const sunLight = new THREE.PointLight(0xfff2d8, 4.0, 0, 0); // decay 0 → reaches the whole system
+  sunLight.position.set(0, 90, 0);
   scene.add(sunLight);
-  scene.add(new THREE.HemisphereLight(0x5a74b0, 0x120a1e, 0.3));
+  scene.add(new THREE.HemisphereLight(0x4a5e90, 0x100818, 0.28));
   // neutral studio environment so metallic ship hulls reflect light instead of reading black
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -100,7 +100,6 @@ async function main() {
   };
 
   for (const p of PLANETS) {
-    addOrbitRing(scene, p.orbit);
     const pl = makePlanet({ radius: p.size, color: p.color, gas: p.type === 'gas', seed: seedFor(p.name) });
     const g = pl.group;
     g.position.set(Math.cos(p.angle0) * p.orbit, 0, Math.sin(p.angle0) * p.orbit);
@@ -344,22 +343,16 @@ async function main() {
 const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const vecOf = (v: THREE.Vector3): Vec => ({ x: v.x, z: v.z });
 
+// One clean, evenly-spaced polar reference grid (concentric rings + spokes) for the plane.
 function addPolarGrid(scene: THREE.Scene, maxR: number) {
-  const pts: number[] = [];
-  for (let r = 200; r <= maxR; r += 200) {            // concentric rings
+  const STEP = 260, SPOKES = 16; const pts: number[] = [];
+  for (let r = STEP; r <= maxR; r += STEP) {
     let px = r, pz = 0;
-    for (let i = 1; i <= 120; i++) { const a = (i / 120) * Math.PI * 2; const x = Math.cos(a) * r, z = Math.sin(a) * r; pts.push(px, 0, pz, x, 0, z); px = x; pz = z; }
+    for (let i = 1; i <= 128; i++) { const a = (i / 128) * Math.PI * 2; const x = Math.cos(a) * r, z = Math.sin(a) * r; pts.push(px, 0, pz, x, 0, z); px = x; pz = z; }
   }
-  for (let s = 0; s < 24; s++) { const a = (s / 24) * Math.PI * 2; pts.push(0, 0, 0, Math.cos(a) * maxR, 0, Math.sin(a) * maxR); }   // radial spokes
+  for (let s = 0; s < SPOKES; s++) { const a = (s / SPOKES) * Math.PI * 2; pts.push(0, 0, 0, Math.cos(a) * maxR, 0, Math.sin(a) * maxR); }
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x35507a, transparent: true, opacity: 0.22 })));
-}
-
-function addOrbitRing(scene: THREE.Scene, r: number) {
-  const seg = 128; const pts: THREE.Vector3[] = [];
-  for (let i = 0; i <= seg; i++) { const a = (i / seg) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)); }
-  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x2a3c54, transparent: true, opacity: 0.5 }));
-  scene.add(line);
+  scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x2a3f5c, transparent: true, opacity: 0.18 })));
 }
 
 function addRings(g: THREE.Group, size: number, color: number) {
