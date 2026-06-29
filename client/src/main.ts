@@ -58,8 +58,11 @@ async function main() {
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);
   controls.enableDamping = true; controls.dampingFactor = 0.08;
+  controls.enableRotate = false;             // fixed near-ortho angle, never rotates
+  controls.screenSpacePanning = false;       // left-drag pans across the orbital plane
   controls.minDistance = 400; controls.maxDistance = 12000;
-  controls.maxPolarAngle = Math.PI * 0.49;   // stay above the plane
+  controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };   // mobile: drag to pan, pinch to zoom
 
   // ---------- lighting (for the glTF ships; planets self-shade in their shaders) ----------
   const sunLight = new THREE.PointLight(0xfff0d0, 3.2, 0, 0); // decay 0 → reaches the whole system
@@ -296,7 +299,8 @@ async function main() {
       if (s.state === 'idle' && s.mine && s.cargo === 0) s.state = 'moving';
       // smooth turn (glTF nose = -Z after Y-up export → face heading about Y)
       s.heading += Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, angWrap(desired - s.heading)));
-      s.obj.position.set(s.pos.x, SHIP_Y, s.pos.z); s.obj.rotation.y = -s.heading;
+      // glTF nose points -Z; heading is atan2(dx,dz) → rotate so the nose follows velocity
+      s.obj.position.set(s.pos.x, SHIP_Y, s.pos.z); s.obj.rotation.y = s.heading + Math.PI;
       s.disc.visible = ships[selected] === s;
       if (s.disc.visible) { s.disc.position.set(s.pos.x, 1, s.pos.z); (s.disc.material as THREE.MeshBasicMaterial).opacity = 0.6 + 0.4 * pulse; }
     }
