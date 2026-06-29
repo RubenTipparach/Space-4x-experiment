@@ -5,11 +5,13 @@ import {
 
 const BASE = import.meta.env.BASE_URL;
 const ANGLES = 24;
-const SHIP_SCALE = 0.26;
+const SHIP_SCALE = 0.085;          // ~1/4 of the previous size
 const SHIP_SPEED = 150;
+const TURN_RATE = 6;               // rad/s — smooth turning between frames
 const MINE_RATE = 22;
 const CARGO_CAP = 100;
 const HQ = { x: 250, y: -300 };   // clear of the star's glow so ships read
+const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const TEX_LIGHT_ANGLE = Math.atan2(0.42 - 0.5, 0.72 - 0.5); // sphere highlight direction
 
 const frameUrl = (fid: string, idx: number) =>
@@ -18,7 +20,7 @@ const frameUrl = (fid: string, idx: number) =>
 interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): { x: number; y: number }; }
 type Vec = { x: number; y: number };
 interface Ship {
-  def: typeof FACTIONS[number]; sprite: Sprite; frames: Texture[]; ring: Graphics; sc: Container;
+  def: typeof FACTIONS[number]; sprite: Sprite; frames: Texture[]; ring: Graphics; icon: Graphics; sc: Container;
   pos: Vec; state: 'idle' | 'moving' | 'mining' | 'returning';
   moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null; heading: number;
 }
@@ -102,7 +104,7 @@ async function main() {
     const neb = new Sprite(canvasTex(Math.min(w, 1920), Math.min(h, 1200), drawNebula));
     neb.width = w; neb.height = h; neb.alpha = 0.9; bgVisual.addChild(neb);
     const g = new Graphics();
-    const n = Math.floor(w * h / 5200);
+    const n = Math.floor(w * h / 2200);   // denser starfield
     for (let i = 0; i < n; i++) {
       const big = Math.random() < 0.14;
       const size = big ? 1.0 + Math.random() * 1.7 : 0.3 + Math.random() * 1.0;
@@ -216,6 +218,44 @@ async function main() {
   hqLabel.anchor.set(0.5, 0); hqLabel.y = 20; hq.addChild(hqLabel);
   hoverable(hq, '<div class="t-name">Headquarters</div><div class="t-tags">deposit point</div>');
 
+  // ---------- asteroid belt (alive: drifting rocks) ----------
+  const BELT_R = 460;
+  const belt: { g: Graphics; angle: number; r: number; speed: number; spin: number }[] = [];
+  const beltLayer = new Container(); world.addChild(beltLayer);
+  for (let i = 0; i < 160; i++) {
+    const r = BELT_R + (Math.random() - 0.5) * 70;
+    const s = 1.2 + Math.random() * 2.6;
+    const g = new Graphics().poly([-s, -s * 0.7, s * 0.8, -s, s, s * 0.6, -s * 0.5, s]).fill({ color: 0x6b6256 });
+    beltLayer.addChild(g);
+    belt.push({ g, angle: Math.random() * Math.PI * 2, r, speed: 0.01 + Math.random() * 0.006, spin: (Math.random() - 0.5) * 2 });
+  }
+  // two mineable asteroid clusters embedded in the belt
+  for (const [frac, res] of [[0.2, 'ore'], [0.65, 'crystal']] as const) {
+    const c = new Container(); world.addChild(c);
+    const node = { c, angle: frac * Math.PI * 2, r: BELT_R, speed: 0.013 };
+    belt.push({ g: c as any, angle: node.angle, r: node.r, speed: node.speed, spin: 0 });
+    const col = res === 'ore' ? 0xb98a5a : 0x9be8ff;
+    const gg = new Graphics();
+    for (let k = 0; k < 5; k++) { const a = (k / 5) * 7, rr = 5 + Math.random() * 4; gg.circle(Math.cos(a) * 7, Math.sin(a) * 7, rr).fill({ color: 0x7a6f60 }); }
+    gg.circle(0, 0, 5).fill({ color: col });
+    c.addChild(gg);
+    const mt: MineTarget = { name: res === 'ore' ? 'Ore Field' : 'Crystal Field', resource: res, radius: 16, pos: () => worldPos(c) };
+    mineTargets.push(mt); hoverable(gg, `<div class="t-name">${mt.name}</div><div class="t-tags">${RESOURCE_LABEL[res]}</div>`); bindMine(gg, mt);
+  }
+
+  // ---------- comets (eccentric orbits with tails pointing away from the star) ----------
+  const comets: { c: Container; tail: Sprite; rx: number; ry: number; angle: number; speed: number }[] = [];
+  for (const [rx, ry, sp, ph] of [[680, 920, 0.10, 0], [1080, 760, 0.07, 2.2]] as const) {
+    const c = new Container(); world.addChild(c);
+    const tail = new Sprite(GLOW); tail.anchor.set(1, 0.5); tail.tint = 0x9fe8ff; tail.blendMode = 'add';
+    tail.width = 150; tail.height = 26; c.addChild(tail);
+    c.addChild(new Graphics().circle(0, 0, 3.5).fill({ color: 0xddfbff }));
+    comets.push({ c, tail, rx, ry, angle: ph, speed: sp });
+  }
+
+  // mining/attack beam layer (over planets, under ships)
+  const fx = new Graphics(); world.addChild(fx);
+
   // ---------- fleet ----------
   function buildFleet() {
     const urls: string[] = [];
@@ -223,10 +263,11 @@ async function main() {
     ships = FACTIONS.map((def, i) => {
       const frames = Array.from({ length: ANGLES }, (_, k) => Texture.from(frameUrl(def.id, k)));
       const sprite = new Sprite(frames[0]); sprite.anchor.set(0.5); sprite.scale.set(SHIP_SCALE);
-      const ring = new Graphics().circle(0, 0, 30).stroke({ width: 2, color: 0x5ec8ff, alpha: 0.9 }); ring.visible = false;
+      const ring = new Graphics().circle(0, 0, 22).stroke({ width: 1.5, color: 0x5ec8ff, alpha: 0.9 }); ring.visible = false;
+      const icon = new Graphics(); icon.y = -22; icon.visible = false;  // action indicator above the ship
       const sc = new Container(); const start: Vec = { x: HQ.x + (i - 3.5) * 34, y: HQ.y + (i % 2 ? 26 : 54) };
-      sc.x = start.x; sc.y = start.y; sc.addChild(ring, sprite); world.addChild(sc);
-      return { def, sprite, frames, ring, sc, pos: { ...start }, state: 'idle' as const, moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0 };
+      sc.x = start.x; sc.y = start.y; sc.addChild(ring, sprite, icon); world.addChild(sc);
+      return { def, sprite, frames, ring, icon, sc, pos: { ...start }, state: 'idle' as const, moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0 };
     });
     buildToolbar();
     // Load frames in the background (Texture.from alone doesn't fetch reliably in v8),
@@ -304,27 +345,62 @@ async function main() {
   window.addEventListener('resize', onResize);
 
   // ---------- loop ----------
+  let T = 0;
   function step(dt: number) {
+    T += dt;
     for (const o of orbiters) { o.angle += o.speed * dt; o.c.x = Math.cos(o.angle) * o.orbit; o.c.y = Math.sin(o.angle) * o.orbit; }
     for (const s of spinners) { s.angle += s.speed * dt; s.c.x = s.parent.x + Math.cos(s.angle) * s.dist; s.c.y = s.parent.y + Math.sin(s.angle) * s.dist; }
     for (const b of shaded) b.spr.rotation = Math.atan2(-b.c.y, -b.c.x) - TEX_LIGHT_ANGLE;
+    for (const r of belt) { r.angle += r.speed * dt; r.g.x = Math.cos(r.angle) * r.r; r.g.y = Math.sin(r.angle) * r.r; r.g.rotation += r.spin * dt; }
+    for (const cm of comets) {
+      cm.angle += cm.speed * dt;
+      cm.c.x = Math.cos(cm.angle) * cm.rx; cm.c.y = Math.sin(cm.angle) * cm.ry;
+      cm.tail.rotation = Math.atan2(cm.c.y, cm.c.x);  // tail points away from the star
+    }
 
+    const pulse = 0.55 + 0.45 * Math.sin(T * 6);
+    fx.clear();
     for (const s of ships) {
-      let dest: Vec | null = null;
-      if (s.state === 'moving') dest = s.mine ? s.mine.pos() : s.moveTo;
-      else if (s.state === 'returning') dest = { ...HQ };
-      else if (s.state === 'mining' && s.mine) dest = s.mine.pos();
-      if (dest) {
-        const dx = dest.x - s.pos.x, dy = dest.y - s.pos.y, d = Math.hypot(dx, dy);
-        const arriveR = s.mine ? s.mine.radius + 14 : (s.state === 'returning' ? 22 : 4);
-        if (d > arriveR) { const k = Math.min(1, SHIP_SPEED * dt / d); s.pos.x += dx * k; s.pos.y += dy * k; s.heading = Math.atan2(dx, -dy); }
-        else if (s.state === 'moving') s.state = s.mine ? 'mining' : 'idle';
-        else if (s.state === 'returning') { if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; } s.state = 'idle'; s.moveTo = null; }
+      let desired = s.heading;
+      if (s.state === 'mining' && s.mine) {
+        // smoothly hug the (orbiting) body and stay synced as it moves
+        const bp = s.mine.pos();
+        let dx = s.pos.x - bp.x, dy = s.pos.y - bp.y; const len = Math.hypot(dx, dy) || 1;
+        const rad = s.mine.radius + 14;
+        const k = 1 - Math.exp(-9 * dt);
+        s.pos.x += (bp.x + dx / len * rad - s.pos.x) * k;
+        s.pos.y += (bp.y + dy / len * rad - s.pos.y) * k;
+        desired = Math.atan2(bp.x - s.pos.x, -(bp.y - s.pos.y));
+        s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP, s.cargo + MINE_RATE * dt);
+        if (s.cargo >= CARGO_CAP) s.state = 'returning';
+        // mining beam
+        fx.moveTo(s.pos.x, s.pos.y).lineTo(bp.x, bp.y).stroke({ width: 2, color: RES_COLOR[s.mine.resource], alpha: 0.35 + 0.35 * pulse });
+        fx.circle(bp.x, bp.y, 4 + 2 * pulse).fill({ color: RES_COLOR[s.mine.resource], alpha: 0.5 });
+      } else {
+        const dest: Vec | null = s.state === 'returning' ? { ...HQ } : s.state === 'moving' ? (s.mine ? s.mine.pos() : s.moveTo) : null;
+        if (dest) {
+          const dx = dest.x - s.pos.x, dy = dest.y - s.pos.y, d = Math.hypot(dx, dy);
+          const arriveR = s.mine ? s.mine.radius + 14 : (s.state === 'returning' ? 22 : 4);
+          if (d > arriveR) { const k = Math.min(1, SHIP_SPEED * dt / d); s.pos.x += dx * k; s.pos.y += dy * k; desired = Math.atan2(dx, -dy); }
+          else if (s.state === 'moving') s.state = s.mine ? 'mining' : 'idle';
+          else if (s.state === 'returning') { if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; } s.state = 'idle'; s.moveTo = null; }
+        }
       }
-      if (s.state === 'mining' && s.mine) { s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP, s.cargo + MINE_RATE * dt); if (s.cargo >= CARGO_CAP) s.state = 'returning'; }
       if (s.state === 'idle' && s.mine && s.cargo === 0) s.state = 'moving';
+
+      // smooth turn toward desired heading (fills the gap between the 24 frames)
+      s.heading += Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, angWrap(desired - s.heading)));
       const idx = Math.round((s.heading * 180 / Math.PI) / 15);
       s.sprite.texture = s.frames[((idx % ANGLES) + ANGLES) % ANGLES];
+      s.sprite.rotation = angWrap(s.heading - idx * 15 * Math.PI / 180);  // residual → continuous
+
+      // action indicator
+      if (s.state === 'mining' && s.mine) {
+        s.icon.visible = true; s.icon.clear();
+        s.icon.circle(0, 0, 4 + pulse).stroke({ width: 1.5, color: RES_COLOR[s.mine.resource], alpha: 0.9 });
+        s.icon.circle(0, 0, 1.5).fill({ color: RES_COLOR[s.mine.resource] });
+      } else s.icon.visible = false;
+
       s.sc.x = s.pos.x; s.sc.y = s.pos.y; s.ring.visible = (ships[selected] === s);
     }
   }
@@ -341,5 +417,6 @@ async function main() {
   buildFleet();
   onResize();
   updateHud();
+  (window as any).__game = { ships, mineTargets, world };  // debug/test handle
   (window as any).__ready = true;
 }
