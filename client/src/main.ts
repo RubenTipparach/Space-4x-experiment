@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Text, Texture, Assets, Geometry, Mesh, Shader } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Text, Texture, Assets, Geometry, Mesh, Shader, Circle } from 'pixi.js';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
@@ -20,6 +20,8 @@ const frameUrl = (fid: string, idx: number) => `${BASE}sprites/${fid}_y${yawDeg(
 const normalUrl = (fid: string, idx: number) => `${BASE}sprites/nm/${fid}_y${yawDeg(idx)}_n.png`;
 
 // ---- normal-mapped ship lighting (Mesh + custom shader) ----
+const SEL_R = 15;                     // selection disc radius (world units)
+const SHIP_HIT_R = 14;                // tight click target around the ship
 const SHIP_TEX = 320;                 // sprite native size → centered quad half-extent
 const SHIP_LIGHT_Z = 0.55;            // toward-viewer component of the star light
 const SHIP_LIGHT_STR = 0.85;          // how strongly the normal map modulates the baked albedo
@@ -59,7 +61,7 @@ interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(
 type Vec = { x: number; y: number };
 interface Ship {
   def: typeof FACTIONS[number]; mesh: Mesh<Geometry, Shader>; shader: Shader; albedo: Texture[]; normals: Texture[];
-  ring: Graphics; icon: Graphics; sc: Container;
+  disc: Graphics; icon: Graphics; sc: Container;
   pos: Vec; state: 'idle' | 'moving' | 'mining' | 'returning';
   moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null; heading: number;
 }
@@ -315,11 +317,18 @@ async function main() {
         },
       } });
       const mesh = new Mesh({ geometry: shipGeometry(), shader }); mesh.scale.set(SHIP_SCALE);
-      const ring = new Graphics().circle(0, 0, 22).stroke({ width: 1.5, color: 0x5ec8ff, alpha: 0.9 }); ring.visible = false;
+      // selection indicator: a planar disc lying on the orbital plane (squashed by ISO)
+      const disc = new Graphics()
+        .ellipse(0, 0, SEL_R, SEL_R * ISO).fill({ color: 0x5ec8ff, alpha: 0.16 })
+        .ellipse(0, 0, SEL_R, SEL_R * ISO).stroke({ width: 1.5, color: 0x7fdcff, alpha: 0.85 });
+      disc.visible = false;
       const icon = new Graphics(); icon.y = -22; icon.visible = false;  // action indicator above the ship
       const sc = new Container(); const start: Vec = { x: HQ.x + (i - 3.5) * 34, y: HQ.y + (i % 2 ? 26 : 54) };
-      sc.x = start.x; sc.y = start.y; sc.addChild(ring, mesh, icon); world.addChild(sc);
-      return { def, mesh, shader, albedo, normals, ring, icon, sc, pos: { ...start }, state: 'idle' as const, moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0 };
+      sc.x = start.x; sc.y = start.y; sc.addChild(disc, mesh, icon); world.addChild(sc);
+      // click the ship to select it — tight elliptical hit area on the orbital plane
+      sc.eventMode = 'static'; sc.cursor = 'pointer'; sc.hitArea = new Circle(0, 0, SHIP_HIT_R);
+      sc.on('pointertap', (e) => { e.stopPropagation(); selectShip(i); });
+      return { def, mesh, shader, albedo, normals, disc, icon, sc, pos: { ...start }, state: 'idle' as const, moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0 };
     });
     buildToolbar();
     // Stream textures in the background (Texture.from alone doesn't fetch reliably in v8).
@@ -369,13 +378,18 @@ async function main() {
   let hintTimer = 0;
   const DEFAULT_HINT = 'Click a ship in the fleet bar, then click a planet/moon/gas node to mine, or empty space to move.';
   function flashHint(m: string) { hintEl.textContent = m; hintTimer = 3; }
+  function selectShip(i: number) {
+    selected = i;
+    [...fleetEl.children].forEach((c, j) => c.classList.toggle('selected', j === selected));
+    const s = ships[i]; if (s) flashHint(`${s.def.name} selected`);
+  }
   function buildToolbar() {
     fleetEl.innerHTML = '';
     ships.forEach((s, i) => {
       const b = document.createElement('div');
       b.className = 'ship-btn' + (i === selected ? ' selected' : '');
       b.innerHTML = `<img src="${frameUrl(s.def.id, 0)}" alt=""><div class="s-name">${s.def.name}</div><div class="s-stat" data-i="${i}">idle</div>`;
-      b.onclick = () => { selected = i; [...fleetEl.children].forEach((c, j) => c.classList.toggle('selected', j === selected)); };
+      b.onclick = () => selectShip(i);
       fleetEl.appendChild(b);
     });
   }
@@ -467,7 +481,7 @@ async function main() {
         s.icon.circle(0, 0, 1.5).fill({ color: RES_COLOR[s.mine.resource] });
       } else s.icon.visible = false;
 
-      s.sc.x = s.pos.x; s.sc.y = s.pos.y; s.ring.visible = (ships[selected] === s);
+      s.sc.x = s.pos.x; s.sc.y = s.pos.y; s.disc.visible = (ships[selected] === s);
     }
   }
 
