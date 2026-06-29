@@ -11,10 +11,15 @@ import {
 } from './data.ts';
 
 const BASE = import.meta.env.BASE_URL;
-const SHIP_SPEED = 150;
-const TURN_RATE = 4;
+// ship flight model (impulse: thrust forward + turn, with bounded accel — no sliding/snapping)
+const MAX_SPEED = 170;      // units/s cruise
+const ACCEL = 95;           // units/s^2 forward thrust
+const DECEL = 130;          // units/s^2 braking
+const MAX_OMEGA = 2.0;      // rad/s max turn rate
+const ANG_ACCEL = 5.0;      // rad/s^2 turn accel
 const MINE_RATE = 22;
 const CARGO_CAP = 100;
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 const HQ = new THREE.Vector3(250, 0, -300);   // live position; updated each frame (orbits the home planet)
 const HOME_PLANET = 'Verdantia';   // HQ station orbits this world
 const SHIP_Y = 6;                  // hover height above the orbital plane
@@ -23,8 +28,9 @@ const BELT_R = 505;                // belt sits in the gap between Bronce (420) 
 type Vec = { x: number; z: number };
 interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): THREE.Vector3; }
 interface Ship {
-  def: typeof FACTIONS[number]; obj: THREE.Object3D; disc: THREE.Mesh; beam: THREE.Mesh;
-  pos: Vec; heading: number; state: 'idle' | 'moving' | 'mining' | 'returning';
+  def: typeof FACTIONS[number]; obj: THREE.Object3D; disc: THREE.Mesh; beam: THREE.Mesh; path: THREE.Line;
+  pos: Vec; heading: number; speed: number; omega: number;
+  state: 'idle' | 'moving' | 'mining' | 'returning';
   moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null;
 }
 
@@ -207,8 +213,13 @@ async function main() {
     disc.rotation.x = -Math.PI / 2; disc.position.set(start.x, 1, start.z); disc.visible = false; scene.add(disc);
     const beam = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
     beam.visible = false; scene.add(beam);
+    // dashed trajectory line to the ordered destination
+    const path = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+      new THREE.LineDashedMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.55, dashSize: 9, gapSize: 7 }));
+    path.visible = false; scene.add(path);
 
-    ships[i] = { def, obj: holder, disc, beam, pos: { ...start }, heading: 0, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null };
+    ships[i] = { def, obj: holder, disc, beam, path, pos: { ...start }, heading: 0, speed: 0, omega: 0, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null };
   }));
 
   // ---------- raycasting: select ships / move / mine ----------
@@ -297,33 +308,37 @@ async function main() {
     const pulse = 0.55 + 0.45 * Math.sin(T * 6);
     for (const s of ships) {
       if (!s) continue;
-      let desired = s.heading;
       s.beam.visible = false;
-      if (s.state === 'mining' && s.mine) {
-        const bp = s.mine.pos(); const d = new THREE.Vector2(s.pos.x - bp.x, s.pos.z - bp.z); const len = d.length() || 1;
-        const rad = s.mine.radius + 16; const k = 1 - Math.exp(-9 * dt);
-        s.pos.x += (bp.x + d.x / len * rad - s.pos.x) * k; s.pos.z += (bp.z + d.y / len * rad - s.pos.z) * k;
-        desired = Math.atan2(bp.x - s.pos.x, bp.z - s.pos.z);
-        s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP, s.cargo + MINE_RATE * dt);
-        if (s.cargo >= CARGO_CAP) s.state = 'returning';
-        drawBeam(s, bp, pulse);
-      } else {
-        const dest: Vec | null = s.state === 'returning' ? { x: HQ.x, z: HQ.z } : s.state === 'moving' ? (s.mine ? vecOf(s.mine.pos()) : s.moveTo) : null;
-        if (dest) {
-          const dx = dest.x - s.pos.x, dz = dest.z - s.pos.z, dd = Math.hypot(dx, dz);
-          const arriveR = s.mine ? s.mine.radius + 16 : (s.state === 'returning' ? 22 : 6);
-          if (dd > arriveR) { const k = Math.min(1, SHIP_SPEED * dt / dd); s.pos.x += dx * k; s.pos.z += dz * k; desired = Math.atan2(dx, dz); }
-          else if (s.state === 'moving') s.state = s.mine ? 'mining' : 'idle';
+
+      // resolve where this ship is headed (and what to draw the trajectory to)
+      let dest: Vec | null = null, arriveR = 6, lineTo: Vec | null = null;
+      if (s.state === 'returning') { dest = { x: HQ.x, z: HQ.z }; arriveR = 20; lineTo = dest; }
+      else if (s.state === 'moving' && s.mine) { const bp = s.mine.pos(); dest = dockPoint(s, bp, s.mine.radius); arriveR = 8; lineTo = { x: bp.x, z: bp.z }; }
+      else if (s.state === 'moving' && s.moveTo) { dest = s.moveTo; arriveR = 5; lineTo = dest; }
+      else if (s.state === 'mining' && s.mine) { const bp = s.mine.pos(); dest = dockPoint(s, bp, s.mine.radius); arriveR = 8; lineTo = { x: bp.x, z: bp.z }; }
+
+      if (dest) {
+        const arrived = steer(s, dest, arriveR, dt);   // thrust + turn with bounded accel
+        if (arrived) {
+          if (s.state === 'moving') s.state = s.mine ? 'mining' : 'idle';
           else if (s.state === 'returning') { if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; } s.state = 'idle'; s.moveTo = null; }
         }
+      } else {
+        coast(s, dt);   // idle: ease thrust + turn to zero and glide to a stop
+      }
+
+      if (s.state === 'mining' && s.mine) {
+        s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP, s.cargo + MINE_RATE * dt);
+        if (s.cargo >= CARGO_CAP) s.state = 'returning';
+        drawBeam(s, s.mine.pos(), pulse);
       }
       if (s.state === 'idle' && s.mine && s.cargo === 0) s.state = 'moving';
-      // smooth turn (glTF nose = -Z after Y-up export → face heading about Y)
-      s.heading += Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, angWrap(desired - s.heading)));
-      // glTF nose points -Z; heading is atan2(dx,dz) → rotate so the nose follows velocity
+
+      // glTF nose points -Z → rotate by heading+π so the nose leads
       s.obj.position.set(s.pos.x, SHIP_Y, s.pos.z); s.obj.rotation.y = s.heading + Math.PI;
       s.disc.visible = ships[selected] === s;
       if (s.disc.visible) { s.disc.position.set(s.pos.x, 1, s.pos.z); (s.disc.material as THREE.MeshBasicMaterial).opacity = 0.6 + 0.4 * pulse; }
+      updatePath(s, lineTo);
     }
 
     // billboard HTML labels
@@ -359,7 +374,43 @@ async function main() {
 }
 
 const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
-const vecOf = (v: THREE.Vector3): Vec => ({ x: v.x, z: v.z });
+
+// --- ship flight model: forward thrust + turning, all with bounded acceleration ---
+// Heading θ → forward = (sinθ, cosθ). The ship only moves along its nose (no sliding).
+function steer(s: Ship, T: Vec, arriveR: number, dt: number): boolean {
+  const dx = T.x - s.pos.x, dz = T.z - s.pos.z;
+  const dist = Math.hypot(dx, dz);
+  const err = angWrap(Math.atan2(dx, dz) - s.heading);
+  // angular: aim for the turn rate that can still brake to 0 exactly on the bearing,
+  // then move ω toward it within the angular-accel budget (no sudden ω jumps)
+  const omegaDes = clamp(Math.sign(err) * Math.sqrt(2 * ANG_ACCEL * Math.abs(err)), -MAX_OMEGA, MAX_OMEGA);
+  s.omega += clamp(omegaDes - s.omega, -ANG_ACCEL * dt, ANG_ACCEL * dt);
+  s.heading = angWrap(s.heading + s.omega * dt);
+  // linear: arrive (brake to 0 at arriveR), and throttle back while not facing the target
+  const face = Math.max(0, Math.cos(err));
+  const vDes = Math.min(MAX_SPEED, Math.sqrt(2 * DECEL * Math.max(0, dist - arriveR))) * face * face;
+  s.speed += clamp(vDes - s.speed, -DECEL * dt, ACCEL * dt);   // bounded accel/decel
+  s.pos.x += Math.sin(s.heading) * s.speed * dt;
+  s.pos.z += Math.cos(s.heading) * s.speed * dt;
+  return dist <= arriveR && s.speed < 5;
+}
+function coast(s: Ship, dt: number) {   // no orders: ease ω and thrust to zero, glide to a stop
+  s.omega += clamp(-s.omega, -ANG_ACCEL * dt, ANG_ACCEL * dt);
+  s.heading = angWrap(s.heading + s.omega * dt);
+  s.speed = Math.max(0, s.speed - DECEL * dt);
+  s.pos.x += Math.sin(s.heading) * s.speed * dt;
+  s.pos.z += Math.cos(s.heading) * s.speed * dt;
+}
+function dockPoint(s: Ship, bp: THREE.Vector3, radius: number): Vec {
+  const dx = s.pos.x - bp.x, dz = s.pos.z - bp.z; const L = Math.hypot(dx, dz) || 1; const r = radius + 14;
+  return { x: bp.x + dx / L * r, z: bp.z + dz / L * r };
+}
+function updatePath(s: Ship, to: Vec | null) {
+  if (!to) { s.path.visible = false; return; }
+  const p = s.path.geometry.attributes.position as THREE.BufferAttribute;
+  p.setXYZ(0, s.pos.x, 2, s.pos.z); p.setXYZ(1, to.x, 2, to.z); p.needsUpdate = true;
+  s.path.computeLineDistances(); s.path.visible = true;
+}
 
 // One clean, evenly-spaced polar reference grid (concentric rings + spokes) for the plane.
 function addPolarGrid(scene: THREE.Scene, maxR: number) {
