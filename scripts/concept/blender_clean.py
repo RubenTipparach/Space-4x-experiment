@@ -150,6 +150,16 @@ def xs_lens(w=1.0, h=0.6):
 def xs_diamond():
     return [(0, 1.0), (1.0, 0.0), (0, -0.7), (-1.0, 0.0)]
 
+def xs_slab(w=1.0, h=0.55):  # wide flat-top trapezoid -> industrial hull
+    return [(-0.82 * w, h), (0.82 * w, h), (w, -0.15), (0.6 * w, -h), (-0.6 * w, -h), (-w, -0.15)]
+
+def xs_round(w=1.0, h=1.0):  # octagon -> bulbous/organic body
+    return [(0, h), (0.7 * w, 0.7 * h), (w, 0), (0.7 * w, -0.7 * h),
+            (0, -h), (-0.7 * w, -0.7 * h), (-w, 0), (-0.7 * w, 0.7 * h)]
+
+def xs_tall(w=0.55, h=1.1):  # tall narrow peak -> menacing vertical body
+    return [(0, h), (w, 0.2 * h), (0.5 * w, -h), (-0.5 * w, -h), (-w, 0.2 * h)]
+
 
 # ---------------- builders (forward = +Y, up = +Z) ----------------
 def consortium():
@@ -187,125 +197,140 @@ def consortium():
     return o
 
 
-def kareth():  # organic-nature, but hard-surface angular manta + crystal accents
-    green = pmat("green", (0.12, 0.32, 0.20), 0.4, 0.45)
-    jade = pmat("jade", (0.20, 0.58, 0.44), 0.5, 0.4)
-    glow = emat("glow", (0.49, 1.0, 0.77), 12)
+def kareth():  # nature/bioluminescent — wide lofted manta, jade + cyan-green glow
+    green = pmat("green", (0.10, 0.30, 0.19), 0.4, 0.5)
+    jade = pmat("jade", (0.18, 0.55, 0.42), 0.5, 0.42)
+    glow = emat("glow", (0.49, 1.0, 0.77), 11)
     o = []
-    o += [box((0.5, 2.2, 0.3), (0, 0, 0), (0, 0, 0), green, smooth=False, bevel=0.14)]
-    o += [prism(3, 0.42, 0.9, (0, 1.1, 0.05), (math.radians(90), 0, 0), green, bevel=0.05)]
-    for sx in (-1, 1):
-        o += [wing(1.7, 1.0, 0.1, (sx * 1.05, -0.25, 0), sx * -0.38, green, tilt=0.06 * sx)]
-        o += [wing(0.7, 0.5, 0.06, (sx * 1.5, -0.55, 0.06), sx * -0.38, jade)]
-        o += [prism(4, 0.13, 0.45, (sx * 0.55, 0.35, 0.12), (math.radians(90), 0, math.radians(45)), glow, bevel=0)]
-    o += [prism(4, 0.16, 0.55, (0, 0.95, 0.18), (math.radians(90), 0, math.radians(45)), glow, bevel=0)]
-    o += [disc(0.3, 0.08, (0, -1.15, 0), glow)]
+    shape = xs_lens(w=1.0, h=0.42)
+    stations = [(1.55, 0.12, 0.10, 0.0), (1.0, 0.7, 0.4, 0.03), (0.2, 1.5, 0.5, 0.04),
+                (-0.6, 1.35, 0.46, 0.0), (-1.25, 0.7, 0.32, -0.03), (-1.55, 0.18, 0.14, -0.04)]
+    o += [loft_hull(shape, stations, green, bevel=0.06)]
+    # bioluminescent veins (centered + mirrored), crystal accents on pylons, rear glow
+    o += [box((0.06, 2.2, 0.05), (0, -0.1, 0.34), (0, 0, 0), glow)]
+    o += pair(lambda sx: box((0.05, 1.1, 0.04), (sx * 0.5, 0.1, 0.3), (0, 0, sx * 0.12), glow))
+    o += pair(lambda sx: [box((0.4, 0.1, 0.06), (sx * 1.15, 0.2, 0.06), (0, 0, 0), jade),       # pylon
+                          prism(4, 0.16, 0.5, (sx * 1.5, 0.2, 0.1), (math.radians(90), 0, math.radians(45)), glow, bevel=0)])
+    o += [disc(0.32, 0.08, (0, -1.05, 0), glow)]
     return o
 
 
-def terra():  # blocky frontier salvage, asymmetric, rust
+def terra():  # frontier freighter — heavy lofted slab-keel, rust, salvage detail
     rust = pmat("rust", (0.5, 0.3, 0.16), 0.5, 0.8)
     dark = pmat("dark", (0.3, 0.18, 0.1), 0.5, 0.85)
     tan = pmat("tan", (0.7, 0.55, 0.3), 0.65, 0.6)
     glow = emat("glow", (1.0, 0.5, 0.2), 10)
     o = []
-    # symmetric core (centered hull/nose/deck + mirrored engines/guns)
-    o += [box((1.0, 2.1, 0.72), (0, 0, 0), (0, 0, 0), rust, bevel=0.08)]
-    o += [box((0.72, 0.6, 0.56), (0, 1.25, 0.02), (0, 0, 0), rust, bevel=0.06)]
-    o += [box((0.74, 1.5, 0.16), (0, -0.1, 0.46), (0, 0, 0), dark)]
-    o += pair(lambda sx: [cyl(0.3, 0.7, (sx * 0.4, -1.25, 0), (math.radians(90), 0, 0), dark),
-                          disc(0.26, 0.06, (sx * 0.4, -1.55, 0), glow)])
-    o += pair(lambda sx: cyl(0.06, 1.0, (sx * 0.55, 1.4, 0.2), (math.radians(90), 0, 0), tan))  # guns
-    # asymmetric salvage detail — each fully one-sided (offside guards the centerline)
-    o += [offside(box((0.7, 0.9, 0.6), (-1.0, -0.2, 0), (0, 0, 0), dark, bevel=0.05))]   # salvage pod L
-    o += [offside(box((0.18, 0.5, 0.18), (-0.62, -0.2, 0), (0, 0, math.radians(90)), tan))]  # strut L
-    o += [offside(cyl(0.04, 1.2, (0.95, 0.4, 0.3), (0, math.radians(20), 0), tan))]      # antenna R
-    o += [offside(sphere((1.18, 0.95, 0.42), (0.08, 0.08, 0.08), glow))]
-    o += [offside(box((0.4, 0.35, 0.3), (0.4, 0.5, 0.5), (0, 0, 0), tan))]               # crate R
+    shape = xs_slab(w=1.0, h=0.55)
+    stations = [(1.55, 0.45, 0.4, 0.0), (1.0, 0.8, 0.55, 0.0), (0.2, 1.0, 0.62, 0.0),
+                (-0.7, 0.95, 0.6, 0.0), (-1.35, 0.78, 0.5, 0.0), (-1.7, 0.5, 0.4, -0.02)]
+    o += [loft_hull(shape, stations, rust, bevel=0.07)]
+    o += [box((0.7, 1.4, 0.12), (0, -0.1, 0.5), (0, 0, 0), dark)]  # centered deck plate
+    # mirrored engines on pylons + guns
+    o += pair(lambda sx: [box((0.18, 0.4, 0.1), (sx * 0.75, -1.2, 0), (0, 0, 0), tan),          # pylon
+                          cyl(0.28, 0.7, (sx * 1.0, -1.35, 0), (math.radians(90), 0, 0), dark),
+                          disc(0.24, 0.06, (sx * 1.0, -1.66, 0), glow)])
+    o += pair(lambda sx: cyl(0.05, 1.0, (sx * 0.5, 1.3, 0.25), (math.radians(90), 0, 0), tan))   # guns
+    # one-sided salvage detail (offside guards the centerline)
+    o += [offside(box((0.6, 0.85, 0.55), (-1.0, -0.1, 0.05), (0, 0, 0), dark, bevel=0.05))]      # salvage pod L
+    o += [offside(box((0.16, 0.45, 0.16), (-0.6, -0.1, 0.05), (0, 0, math.radians(90)), tan))]   # strut L
+    o += [offside(cyl(0.04, 1.1, (0.85, 0.5, 0.45), (0, math.radians(18), 0), tan))]             # antenna R
+    o += [offside(box((0.35, 0.35, 0.3), (0.55, 0.6, 0.55), (0, 0, 0), tan))]                    # crate R
     return o
 
 
-def illumaria():  # sleek dark stealth arrowhead, magenta glow
+def illumaria():  # shadow — long flat lofted arrow, swept wings, magenta glow
     dark = pmat("dark", (0.16, 0.14, 0.25), 0.8, 0.25)
     trim = pmat("trim", (0.30, 0.24, 0.45), 0.8, 0.3)
-    glow = emat("glow", (0.82, 0.29, 1.0), 13)
+    glow = emat("glow", (0.82, 0.29, 1.0), 12)
     o = []
-    o += [prism(4, 0.5, 2.6, (0, -0.1, 0), (math.radians(90), 0, math.radians(45)), dark, bevel=0.04)]
-    o += [nose_cone(0.5, 1.2, 1.7, dark, verts=4)]
-    for sx in (-1, 1):
-        o += [wing(1.9, 0.9, 0.09, (sx * 0.95, -0.5, 0), sx * -0.5, dark)]
-    o += [disc(0.26, 0.06, (0, -1.45, 0), glow)]
+    shape = xs_lens(w=1.0, h=0.3)
+    stations = [(2.2, 0.05, 0.05, 0.0), (1.4, 0.5, 0.26, 0.02), (0.4, 0.9, 0.32, 0.02),
+                (-0.5, 0.78, 0.3, 0.0), (-1.4, 0.45, 0.22, -0.02), (-1.85, 0.12, 0.1, -0.03)]
+    o += [loft_hull(shape, stations, dark, bevel=0.04)]
+    o += [box((0.18, 0.7, 0.14), (0, 0.5, 0.18), (0, 0, 0), trim)]  # centered dorsal sensor
+    o += pair(lambda sx: [box((0.4, 0.12, 0.06), (sx * 0.85, -0.45, 0.02), (0, 0, 0), dark),   # pylon
+                          wing(1.5, 0.95, 0.07, (sx * 1.35, -0.55, 0.02), sx * -0.5, dark)])
+    o += [disc(0.24, 0.06, (0, -1.7, 0), glow)]
     return o
 
 
-def astryn():  # scrappy rebel strike fighter — symmetric core, one-sided detail
+def astryn():  # rebels — lofted keel fighter, scrappy one-sided detail, olive/orange
     olive = pmat("olive", (0.36, 0.4, 0.27), 0.5, 0.7)
     dark = pmat("dark", (0.2, 0.22, 0.14), 0.5, 0.8)
     orange = pmat("orange", (0.84, 0.51, 0.18), 0.6, 0.5)
     glow = emat("glow", (0.61, 0.91, 0.29), 11)
     o = []
-    # symmetric core (centered + mirrored pairs)
-    o += [box((0.62, 2.1, 0.46), (0, 0, 0), (0, 0, 0), olive, bevel=0.07)]
-    o += [nose_cone(0.32, 0.9, 1.4, olive)]
-    o += [box((0.16, 1.3, 0.1), (0, -0.2, 0.3), (0, 0, 0), orange)]  # centered stripe
-    o += pair(lambda sx: wing(1.5, 0.7, 0.08, (sx * 0.95, -0.25, 0), sx * -0.3, olive))
-    o += pair(lambda sx: [cyl(0.2, 0.6, (sx * 0.4, -1.2, 0), (math.radians(90), 0, 0), dark),
-                          disc(0.17, 0.05, (sx * 0.4, -1.45, 0), glow)])
-    # asymmetric flavor — each entirely on one side (offside guards the centerline)
-    o += [offside(box((0.42, 0.5, 0.42), (-0.6, 0.25, 0.14), (0, 0, 0), dark))]      # patch panel L
-    o += [offside(box((0.14, 0.7, 0.14), (0.66, 0.4, 0.2), (0, 0, 0), orange))]      # sensor pod R
+    shape = xs_keel(top=0.95, bottom=-0.5, shoulder=0.2, w=1.0)
+    stations = [(1.7, 0.08, 0.08, 0.0), (1.1, 0.34, 0.32, 0.02), (0.3, 0.55, 0.46, 0.03),
+                (-0.5, 0.55, 0.44, 0.0), (-1.2, 0.4, 0.34, -0.02), (-1.5, 0.12, 0.14, -0.03)]
+    o += [loft_hull(shape, stations, olive, bevel=0.05)]
+    # mirrored wings on pylons + engines
+    o += pair(lambda sx: [box((0.35, 0.12, 0.07), (sx * 0.75, -0.2, 0.04), (0, 0, 0), dark),    # pylon
+                          wing(1.3, 0.7, 0.07, (sx * 1.25, -0.3, 0.04), sx * -0.32, olive)])
+    o += pair(lambda sx: [cyl(0.18, 0.55, (sx * 0.4, -1.15, 0), (math.radians(90), 0, 0), dark),
+                          disc(0.15, 0.05, (sx * 0.4, -1.4, 0), glow)])
+    # one-sided scrappy detail
+    o += [offside(box((0.4, 0.5, 0.4), (-0.55, 0.2, 0.16), (0, 0, 0), dark))]        # patch panel L
+    o += [offside(box((0.13, 0.6, 0.13), (0.6, 0.35, 0.2), (0, 0, 0), orange))]      # sensor pod R
     return o
 
 
-def ezrathi():  # angular void-cult monolith, obsidian, green/violet glow
+def ezrathi():  # void cult — tall narrow lofted monolith, obsidian, green/violet glow
     obs = pmat("obs", (0.1, 0.085, 0.13), 0.45, 0.4)
     violet = pmat("violet", (0.42, 0.25, 0.63), 0.6, 0.4)
     glow = emat("glow", (0.55, 1.0, 0.42), 13)
     vglow = emat("vglow", (0.55, 0.3, 1.0), 9)
     o = []
-    o += [prism(6, 0.6, 2.4, (0, 0, 0), (math.radians(90), 0, 0), obs, bevel=0.05)]
-    o += [nose_cone(0.55, 1.1, 1.45, obs, verts=3)]
-    for sx in (-1, 1):
-        o += [box((0.28, 1.3, 0.28), (sx * 1.15, 0.1, 0.05), (0, 0, sx * 0.2), violet, bevel=0.04)]  # monolith shard
-        o += [wing(1.0, 0.7, 0.12, (sx * 0.8, -0.7, 0), sx * -0.6, obs)]  # blade
-    o += [prism(8, 0.34, 0.2, (0, 0.2, 0.34), (0, 0, 0), glow, bevel=0)]  # void core
-    o += [box((0.6, 0.06, 0.06), (0, 0.2, 0.42), (0, 0, 0), glow)]
-    o += [box((0.06, 0.6, 0.06), (0, 0.2, 0.42), (0, 0, 0), glow)]
-    o += [disc(0.28, 0.06, (0, -1.3, 0), vglow)]
+    shape = xs_tall(w=0.55, h=1.1)
+    stations = [(1.8, 0.08, 0.14, 0.0), (1.2, 0.4, 0.7, 0.0), (0.3, 0.62, 1.0, 0.0),
+                (-0.5, 0.55, 0.9, 0.0), (-1.3, 0.34, 0.55, 0.0), (-1.7, 0.12, 0.2, -0.02)]
+    o += [loft_hull(shape, stations, obs, bevel=0.03)]
+    # mirrored sharp shards on pylons (ritual blades)
+    o += pair(lambda sx: [box((0.35, 0.1, 0.1), (sx * 0.7, 0.1, 0.2), (0, 0, sx * 0.2), violet),  # pylon
+                          box((0.22, 1.2, 0.22), (sx * 1.2, 0.1, 0.25), (0, 0, sx * 0.18), violet, bevel=0.03)])
+    # centered void core + rune + violet drive
+    o += [prism(8, 0.3, 0.2, (0, 0.2, 0.55), (0, 0, 0), glow, bevel=0)]
+    o += [box((0.5, 0.05, 0.05), (0, 0.2, 0.62), (0, 0, 0), glow)]
+    o += [box((0.05, 0.5, 0.05), (0, 0.2, 0.62), (0, 0, 0), glow)]
+    o += [disc(0.26, 0.06, (0, -1.55, 0), vglow)]
     return o
 
 
-def krithul():  # bio-blight — symmetric core hull, one-sided lumps for organic asymmetry
-    flesh = pmat("flesh", (0.43, 0.48, 0.18), 0.15, 0.85)
+def krithul():  # plague — bulbous lofted lens, one-sided lumps, toxic glow
+    flesh = pmat("flesh", (0.43, 0.48, 0.18), 0.12, 0.88)
     dark = pmat("dark", (0.3, 0.32, 0.12), 0.2, 0.85)
     glow = emat("glow", (0.78, 1.0, 0.23), 12)
     o = []
-    # symmetric core
-    o += [prism(6, 0.72, 2.0, (0, 0, 0), (math.radians(90), 0, 0), flesh, bevel=0.18)]
-    o += [nose_cone(0.42, 0.85, 1.25, flesh)]
-    o += [disc(0.32, 0.07, (0, -1.0, 0), glow)]               # centered drive
-    o += [sphere((0, 0.45, 0.42), (0.18, 0.18, 0.18), glow)]  # centered pustule
-    # one-sided lumps (each fully off the centerline)
-    o += [offside(box((0.7, 0.95, 0.6), (0.6, 0.45, 0.06), (0, 0, math.radians(12)), flesh, bevel=0.16))]
-    o += [offside(box((0.55, 0.7, 0.5), (-0.55, -0.25, -0.05), (0, 0, math.radians(-10)), flesh, bevel=0.16))]
-    o += [offside(sphere((0.55, -0.2, 0.36), (0.15, 0.15, 0.15), glow))]
-    o += [offside(sphere((-0.45, 0.15, 0.34), (0.17, 0.17, 0.17), glow))]
-    # symmetric tendrils
+    shape = xs_round(w=1.0, h=0.85)
+    stations = [(1.35, 0.22, 0.2, 0.0), (0.7, 0.7, 0.6, 0.0), (0.0, 1.0, 0.85, 0.0),
+                (-0.7, 0.85, 0.7, 0.0), (-1.3, 0.5, 0.42, 0.0), (-1.6, 0.2, 0.18, -0.03)]
+    o += [loft_hull(shape, stations, flesh, bevel=0.1, smooth=True)]
+    o += [disc(0.32, 0.07, (0, -1.0, 0), glow)]                # centered drive
+    o += [sphere((0, 0.5, 0.55), (0.16, 0.16, 0.16), glow)]    # centered pustule
+    # one-sided diseased lumps (offside) + glow pustules
+    o += [offside(box((0.6, 0.8, 0.5), (0.65, 0.4, 0.1), (0, 0, math.radians(12)), flesh, bevel=0.16))]
+    o += [offside(box((0.5, 0.6, 0.45), (-0.6, -0.2, 0.0), (0, 0, math.radians(-10)), flesh, bevel=0.16))]
+    o += [offside(sphere((0.6, -0.2, 0.4), (0.14, 0.14, 0.14), glow))]
+    o += [offside(sphere((-0.5, 0.2, 0.38), (0.16, 0.16, 0.16), glow))]
     o += pair(lambda sx: cyl(0.1, 1.0, (sx * 0.34, -1.1, -0.05), (math.radians(72), 0, sx * 0.2), dark))
     return o
 
 
-def shadur():  # clean knife-edge stealth dagger, cyan glow
+def shadur():  # rogue stealth — long narrow lofted dagger, swept tail fins, cyan glow
     dark = pmat("dark", (0.086, 0.125, 0.18), 0.74, 0.28)
     trim = pmat("trim", (0.18, 0.4, 0.46), 0.7, 0.3)
     glow = emat("glow", (0.22, 0.9, 1.0), 13)
     o = []
-    o += [prism(4, 0.42, 3.0, (0, -0.1, 0), (math.radians(90), 0, math.radians(45)), dark, bevel=0.03)]
-    o += [nose_cone(0.42, 1.4, 1.9, dark, verts=4)]
-    for sx in (-1, 1):
-        o += [wing(1.3, 0.6, 0.08, (sx * 0.7, -1.0, 0), sx * -0.7, dark, tilt=-0.15)]
-    o += [disc(0.16, 0.05, (0, 0.9, 0.2), glow)]  # cockpit
-    o += [disc(0.24, 0.06, (0, -1.5, 0), glow)]  # drive
+    shape = xs_diamond()
+    stations = [(2.3, 0.05, 0.08, 0.0), (1.4, 0.34, 0.42, 0.0), (0.4, 0.5, 0.6, 0.0),
+                (-0.6, 0.44, 0.54, 0.0), (-1.5, 0.3, 0.36, 0.0), (-2.0, 0.1, 0.12, 0.0)]
+    o += [loft_hull(shape, stations, dark, bevel=0.03)]
+    # mirrored swept tail fins on pylons (rear)
+    o += pair(lambda sx: [box((0.3, 0.1, 0.06), (sx * 0.45, -1.1, 0), (0, 0, 0), dark),       # pylon
+                          wing(1.0, 0.55, 0.06, (sx * 0.85, -1.2, 0), sx * -0.7, dark, tilt=-0.12)])
+    o += [disc(0.14, 0.05, (0, 0.85, 0.25), glow)]  # cockpit
+    o += [disc(0.22, 0.06, (0, -1.55, 0), glow)]    # drive
     return o
 
 
