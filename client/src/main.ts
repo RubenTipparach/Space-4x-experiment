@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Text, Texture, Assets } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Text, Texture, Assets, Geometry, Mesh, Shader } from 'pixi.js';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
@@ -15,13 +15,51 @@ const HQ = { x: 250, y: -300 * ISO };   // clear of the star's glow so ships rea
 const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const TEX_LIGHT_ANGLE = Math.atan2(0.42 - 0.5, 0.72 - 0.5); // sphere highlight direction
 
-const frameUrl = (fid: string, idx: number) =>
-  `${BASE}sprites/${fid}_y${String(((idx % ANGLES) + ANGLES) % ANGLES * 15).padStart(3, '0')}.png`;
+const yawDeg = (idx: number) => String(((idx % ANGLES) + ANGLES) % ANGLES * 15).padStart(3, '0');
+const frameUrl = (fid: string, idx: number) => `${BASE}sprites/${fid}_y${yawDeg(idx)}.png`;
+const normalUrl = (fid: string, idx: number) => `${BASE}sprites/nm/${fid}_y${yawDeg(idx)}_n.png`;
+
+// ---- normal-mapped ship lighting (Mesh + custom shader) ----
+const SHIP_TEX = 320;                 // sprite native size → centered quad half-extent
+const SHIP_LIGHT_Z = 0.55;            // toward-viewer component of the star light
+const SHIP_LIGHT_STR = 0.85;          // how strongly the normal map modulates the baked albedo
+const SHIP_LIGHT_BIAS = 0.32;
+const shipVert = `#version 300 es
+  in vec2 aPosition; in vec2 aUV; out vec2 vUV;
+  uniform mat3 uProjectionMatrix; uniform mat3 uWorldTransformMatrix; uniform mat3 uTransformMatrix;
+  void main(){ mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
+    gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0); vUV = aUV; }`;
+const shipFrag = `#version 300 es
+  precision highp float;
+  in vec2 vUV; out vec4 fragColor;
+  uniform sampler2D uAlbedo; uniform sampler2D uNormal;
+  uniform vec3 uLight; uniform float uResid; uniform float uStrength; uniform float uBias;
+  void main(){
+    vec4 a = texture(uAlbedo, vUV); if (a.a < 0.04) discard;
+    vec3 raw = texture(uNormal, vUV).rgb * 2.0 - 1.0;
+    vec3 n = normalize(vec3(raw.r, raw.b, raw.g));          // Blender camera-space decode
+    float c = cos(uResid), s = sin(uResid);                 // rotate normal to match sprite spin
+    n.xy = mat2(c, -s, s, c) * n.xy;
+    float d = dot(n, normalize(uLight));
+    float lit = clamp(1.0 + uStrength * (d - uBias), 0.3, 1.85);
+    fragColor = vec4(a.rgb * lit, a.a);
+  }`;
+const shipGeometry = () => new Geometry({
+  attributes: {
+    aPosition: [-SHIP_TEX / 2, -SHIP_TEX / 2, SHIP_TEX / 2, -SHIP_TEX / 2, SHIP_TEX / 2, SHIP_TEX / 2, -SHIP_TEX / 2, SHIP_TEX / 2],
+    aUV: [0, 0, 1, 0, 1, 1, 0, 1],
+  },
+  indexBuffer: [0, 1, 2, 0, 2, 3],
+});
+// flat normal (points at viewer) used until the per-yaw maps stream in
+const FLAT_N = canvasTexFill(0x7fff7f);   // decode → n≈(0,0,1)
+const PLACEHOLDER = canvasTex(2, 2, () => {});   // transparent → ship invisible until albedo streams in
 
 interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): { x: number; y: number }; }
 type Vec = { x: number; y: number };
 interface Ship {
-  def: typeof FACTIONS[number]; sprite: Sprite; frames: Texture[]; ring: Graphics; icon: Graphics; sc: Container;
+  def: typeof FACTIONS[number]; mesh: Mesh<Geometry, Shader>; shader: Shader; albedo: Texture[]; normals: Texture[];
+  ring: Graphics; icon: Graphics; sc: Container;
   pos: Vec; state: 'idle' | 'moving' | 'mining' | 'returning';
   moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null; heading: number;
 }
@@ -43,6 +81,9 @@ function canvasTex(w: number, h: number, draw: (x: CanvasRenderingContext2D, w: 
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   draw(c.getContext('2d')!, w, h);
   return Texture.from(c);
+}
+function canvasTexFill(rgb: number): Texture {
+  return canvasTex(2, 2, (x) => { x.fillStyle = '#' + rgb.toString(16).padStart(6, '0'); x.fillRect(0, 0, 2, 2); });
 }
 const SPHERE = canvasTex(256, 256, (x, w, h) => {
   const cx = w / 2, cy = h / 2, R = w / 2;
@@ -259,23 +300,39 @@ async function main() {
 
   // ---------- fleet ----------
   function buildFleet() {
-    const urls: string[] = [];
-    for (const def of FACTIONS) for (let k = 0; k < ANGLES; k++) urls.push(frameUrl(def.id, k));
+    const albUrls: string[] = [], nrmUrls: string[] = [];
+    for (const def of FACTIONS) for (let k = 0; k < ANGLES; k++) { albUrls.push(frameUrl(def.id, k)); nrmUrls.push(normalUrl(def.id, k)); }
     ships = FACTIONS.map((def, i) => {
-      const frames = Array.from({ length: ANGLES }, (_, k) => Texture.from(frameUrl(def.id, k)));
-      const sprite = new Sprite(frames[0]); sprite.anchor.set(0.5); sprite.scale.set(SHIP_SCALE);
+      const albedo = Array.from({ length: ANGLES }, () => PLACEHOLDER);   // populated by Assets.load below
+      const normals = Array.from({ length: ANGLES }, () => FLAT_N);
+      const shader = Shader.from({ gl: { vertex: shipVert, fragment: shipFrag }, resources: {
+        uAlbedo: PLACEHOLDER.source, uNormal: FLAT_N.source,
+        lightUniforms: {
+          uLight: { value: [0, 0, 1], type: 'vec3<f32>' },
+          uResid: { value: 0, type: 'f32' },
+          uStrength: { value: 0, type: 'f32' },          // 0 until normals load → pure albedo
+          uBias: { value: SHIP_LIGHT_BIAS, type: 'f32' },
+        },
+      } });
+      const mesh = new Mesh({ geometry: shipGeometry(), shader }); mesh.scale.set(SHIP_SCALE);
       const ring = new Graphics().circle(0, 0, 22).stroke({ width: 1.5, color: 0x5ec8ff, alpha: 0.9 }); ring.visible = false;
       const icon = new Graphics(); icon.y = -22; icon.visible = false;  // action indicator above the ship
       const sc = new Container(); const start: Vec = { x: HQ.x + (i - 3.5) * 34, y: HQ.y + (i % 2 ? 26 : 54) };
-      sc.x = start.x; sc.y = start.y; sc.addChild(ring, sprite, icon); world.addChild(sc);
-      return { def, sprite, frames, ring, icon, sc, pos: { ...start }, state: 'idle' as const, moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0 };
+      sc.x = start.x; sc.y = start.y; sc.addChild(ring, mesh, icon); world.addChild(sc);
+      return { def, mesh, shader, albedo, normals, ring, icon, sc, pos: { ...start }, state: 'idle' as const, moveTo: null, mine: null, cargo: 0, cargoRes: null, heading: 0 };
     });
     buildToolbar();
-    // Load frames in the background (Texture.from alone doesn't fetch reliably in v8),
-    // then point each ship's frames at the loaded textures so sprites actually render.
-    Assets.load(urls).then(() => {
-      for (const s of ships) s.frames = Array.from({ length: ANGLES }, (_, k) => Assets.get(frameUrl(s.def.id, k)) as Texture);
-    }).catch((e) => console.error('sprite load', e));
+    // Stream textures in the background (Texture.from alone doesn't fetch reliably in v8).
+    // Use the record returned by Assets.load — keyed by the exact url, no cache-id mismatch.
+    Assets.load(albUrls).then((rec: Record<string, Texture>) => {
+      for (const s of ships) s.albedo = Array.from({ length: ANGLES }, (_, k) => rec[frameUrl(s.def.id, k)] ?? s.albedo[k]);
+    }).catch((e) => console.error('albedo load', e));
+    Assets.load(nrmUrls).then((rec: Record<string, Texture>) => {
+      for (const s of ships) {
+        s.normals = Array.from({ length: ANGLES }, (_, k) => rec[normalUrl(s.def.id, k)] ?? FLAT_N);
+        s.shader.resources.lightUniforms.uniforms.uStrength = SHIP_LIGHT_STR;   // enable normal lighting
+      }
+    }).catch((e) => console.error('normal load', e));
   }
 
   // ---------- input ----------
@@ -391,9 +448,17 @@ async function main() {
 
       // smooth turn toward desired heading (fills the gap between the 24 frames)
       s.heading += Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, angWrap(desired - s.heading)));
-      const idx = Math.round((s.heading * 180 / Math.PI) / 15);
-      s.sprite.texture = s.frames[((idx % ANGLES) + ANGLES) % ANGLES];
-      s.sprite.rotation = angWrap(s.heading - idx * 15 * Math.PI / 180);  // residual → continuous
+      const idx = ((Math.round((s.heading * 180 / Math.PI) / 15) % ANGLES) + ANGLES) % ANGLES;
+      const resid = angWrap(s.heading - idx * 15 * Math.PI / 180);   // residual → continuous spin
+      s.mesh.rotation = resid;
+      const alb = s.albedo[idx] ?? s.albedo[0], nrm = s.normals[idx] ?? FLAT_N;
+      if (alb) s.shader.resources.uAlbedo = alb.source;
+      s.shader.resources.uNormal = nrm.source;
+      // light each ship from the central star, in screen space (y-up), spin-compensated
+      const u = s.shader.resources.lightUniforms.uniforms;
+      const len = Math.hypot(s.pos.x, s.pos.y) || 1;
+      u.uLight = [-s.pos.x / len, s.pos.y / len, SHIP_LIGHT_Z];   // ship→star; flip y (screen→y-up)
+      u.uResid = -resid;
 
       // action indicator
       if (s.state === 'mining' && s.mine) {

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Proof: render a ship's ALBEDO + camera-space NORMAL MAP at an isometric angle.
+"""Render per-yaw camera-space NORMAL MAPS that match the lit y### ship sprites.
 
-The normal map encodes camera-space normals (R=right, G=up, B=toward-camera) via a
-material override that emits Vector Transform(Normal, world->camera)*0.5+0.5, rendered
-with the Raw view transform so the bytes are the literal encoded values. A Pixi shader
-then lights the sprite per-pixel from the star direction.
+The existing client sprites (client/public/sprites/<id>_y###.png) are the lit albedo.
+This renders, at the SAME camera as `blender_clean.frame(objs, yaw)`, a normal map per
+yaw so a Pixi shader can light each sprite per-pixel from the star direction.
 
-Run: python3 scripts/concept/blender_normal.py [faction-id]
-Out: client/public/sprites/nm/<id>_albedo.png and <id>_n.png
+Normal encoding: VectorTransform(Geometry.Normal, world->camera) * 0.5 + 0.5, emitted
+with the Raw view transform so PNG bytes are the literal camera-space normal. Decode in
+the shader as n = (r, b, g)*2 - 1 (channel swap validated against the Three.js proof).
+
+Run:  ANGLES=24 SAMPLES=64 RES=512 python3 scripts/concept/blender_normal.py [id ...]
+      ANGLES=1  -> single hero frame (<id>_albedo.png + <id>_n.png) for de-risk tests
+Out:  client/public/sprites/nm/<id>_y###_n.png   (per-yaw normal maps)
 """
 import bpy, os, sys, math
 from mathutils import Vector
@@ -19,8 +23,8 @@ import blender_clean as bc  # noqa: E402  (defines builders + helpers, no render
 OUT = os.path.join(HERE, "..", "..", "client", "public", "sprites", "nm")
 os.makedirs(OUT, exist_ok=True)
 
-ISO = Vector((0.0, -0.85, 1.0))   # more isometric tilt than the 3/4 hero view
-FID = (sys.argv[1] if len(sys.argv) > 1 else "consortium-galactica")
+ANGLES = int(os.environ.get("ANGLES", "24"))
+IDS = [a for a in sys.argv[1:] if not a.startswith("-")] or list(bc.BUILDERS)
 
 
 def normal_material():
@@ -38,20 +42,35 @@ def normal_material():
     return m
 
 
-# ---- albedo ----
-bc.reset(); bc.setup_world()
-objs = bc.BUILDERS[FID]()
-bc.add_lights()
-bc._cam(objs, ISO, "Y")
-sc = bpy.context.scene
-sc.view_settings.view_transform = "Filmic" if "Filmic" in [v.name for v in sc.view_settings.bl_rna.properties["view_transform"].enum_items] else "Standard"
-bc.render(os.path.join(OUT, f"{FID}_albedo.png"))
-print("rendered albedo")
+def render_set(fid):
+    bc.reset(); bc.setup_world()
+    objs = bc.BUILDERS[fid]()
+    bc.add_lights()
+    sc = bpy.context.scene
 
-# ---- normal map (same framing) ----
-bpy.context.view_layer.material_override = normal_material()
-sc.view_settings.view_transform = "Raw"   # write literal encoded values, no tonemap
-sc.view_settings.look = "None"
-bc.render(os.path.join(OUT, f"{FID}_n.png"))
-print("rendered normal map")
+    if ANGLES <= 1:
+        # de-risk: hero albedo (lit) + normal at a single 3/4 frame
+        bc.frame(objs, 0)
+        sc.view_settings.view_transform = "Standard"
+        bc.render(os.path.join(OUT, f"{fid}_albedo.png"))
+        bpy.context.view_layer.material_override = normal_material()
+        sc.view_settings.view_transform = "Raw"; sc.view_settings.look = "None"
+        bc.render(os.path.join(OUT, f"{fid}_n.png"))
+        print("rendered hero albedo + normal:", fid)
+        return
+
+    # per-yaw normal maps only (albedo = existing lit y### sprites)
+    bpy.context.view_layer.material_override = normal_material()
+    sc.view_settings.view_transform = "Raw"; sc.view_settings.look = "None"
+    step = 360 // ANGLES
+    for k in range(ANGLES):
+        yaw = k * step
+        bc.frame(objs, yaw)
+        bc.render(os.path.join(OUT, f"{fid}_y{yaw:03d}_n.png"))
+    print("rendered", ANGLES, "normal frames:", fid)
+
+
+for fid in IDS:
+    if fid in bc.BUILDERS:
+        render_set(fid)
 print("done")

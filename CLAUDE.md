@@ -85,6 +85,32 @@ Top-down 3/4 view, **24 yaw angles per ship** (360 / 15°), fixed elevation. 6 s
 classes × 8 factions = 48 ships → **1,152 sprites** (before resolution/LOD variants).
 See `docs/FACTIONS_AND_ART.md` §5b–5c.
 
+### Normal-mapped sprite lighting (ships react to the star)
+
+Ships are lit per-pixel in PixiJS (v8 `Mesh` + custom GLSL shader) so the sprite's lit
+side follows the in-system star. Each yaw frame ships with a matching **camera-space
+normal map**.
+
+- **Render** (`scripts/concept/blender_normal.py`): `ANGLES=24 SAMPLES=48 RES=512 python3
+  scripts/concept/blender_normal.py [id ...]` writes `client/public/sprites/nm/<id>_y###_n.png`
+  for every 15° yaw — at the **same camera** as `blender_clean.frame(objs, yaw)`, so the
+  normal maps register with the existing lit `<id>_y###.png` albedo sprites. Encoding:
+  emit `VectorTransform(Geometry.Normal, world→camera) * 0.5 + 0.5` with the **Raw** view
+  transform (literal bytes). `ANGLES=1` writes a single hero `<id>_albedo.png` + `<id>_n.png`
+  for de-risk tests.
+- **Decode** (shader): `n = (r, b, g) * 2 - 1` — the **G/B channel swap** is required
+  (validated against the Three.js proof; don't drop it). Then `lit = 1 + strength*(dot(n, L) - bias)`
+  *modulates* the already-shaded albedo (keeps baked detail, adds a directional term).
+- **Light dir** = ship→star in screen space with `y` flipped (screen-y-down → shader
+  y-up) and a small `+z` toward-viewer term; the sprite's residual spin is fed back as
+  `uResid` to rotate the normals' XY so lighting stays correct between the 24 frames.
+- De-risk harnesses (kept as references): `pixi_nm_test.mjs` (Pixi v8 can do it),
+  `pixi_relight_test.mjs` (modulation on the real albedo), `nm_lighting.mjs` (Three.js
+  proof). **Pixi v8 gotcha:** UBO uniforms need GLSL ES 3.00 — prefix shaders with
+  `#version 300 es` or `Shader.from` compiles them as ES 1.00 and `in/out` fails. Also
+  `Texture.from(urlString)` returns `undefined` in v8 (use `Assets.load`'s returned
+  record; `Texture.from` only accepts canvas/Image/cached ids).
+
 ## Client (vertical slice)
 
 `client/` is a Vite + TypeScript + **PixiJS v8** app (client-only so far): the
