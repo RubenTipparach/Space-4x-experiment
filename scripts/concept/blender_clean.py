@@ -8,7 +8,7 @@ Run: python3 scripts/concept/blender_clean.py [faction_id ...]
 Out: assets/sprites/clean/<faction>.png
 """
 import bpy, math, os, sys
-from mathutils import Vector
+from mathutils import Vector, Matrix
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 OUT = os.path.join(ROOT, "assets", "sprites", "clean")
@@ -76,26 +76,32 @@ def disc(r, depth, loc, mat):  # faces +Y
 
 # ---------------- builders (forward = +Y, up = +Z) ----------------
 def consortium():
-    white = pmat("white", (0.86, 0.89, 0.94), 0.55, 0.28)
+    # hard-surface: chamfered discs/boxes, flat panels; smooth only on round tubes
+    white = pmat("white", (0.84, 0.87, 0.92), 0.55, 0.34)
+    panel = pmat("panel", (0.66, 0.71, 0.78), 0.6, 0.4)
     gold = pmat("gold", (0.83, 0.63, 0.22), 0.95, 0.25)
     blue = emat("blue", (0.30, 0.72, 1.0), 14)
     copper = emat("copper", (1.0, 0.6, 0.3), 6)
     objs = []
-    # saucer (slightly egg toward nose) + rim + bridge
-    objs += [sphere((0, 0.85, 0), (1.55, 1.8, 0.32), white)]
-    objs += [torus(1.55, 0.07, (0, 0.85, 0), gold)]
-    objs += [sphere((0, 0.95, 0.30), (0.32, 0.4, 0.22), white)]
-    objs += [sphere((0, 0.95, 0.34), (0.12, 0.14, 0.1), blue)]
-    # neck + engineering hull (torpedo) + deflector
-    objs += [box((0.34, 0.7, 0.14), (0, -0.35, -0.04), (math.radians(8), 0, 0), white)]
-    objs += [sphere((0, -1.5, -0.05), (0.46, 1.35, 0.42), white)]
-    objs += [disc(0.3, 0.1, (0, -0.42, -0.05), copper)]
-    # pylons + nacelles + bussard + glow strip (mirrored)
+    # saucer: chamfered cylinder (flat deck + tapered rim), raised inner panel, gold rim
+    objs += [cyl(1.62, 0.26, (0, 0.85, 0), (0, 0, 0), white, smooth=True, bevel=0.17)]
+    objs += [cyl(1.04, 0.06, (0, 0.9, 0.15), (0, 0, 0), panel, smooth=True, bevel=0.04)]
+    objs += [cyl(0.5, 0.05, (0, 0.95, 0.19), (0, 0, 0), panel, smooth=True, bevel=0.03)]
+    objs += [torus(1.62, 0.05, (0, 0.85, 0.0), gold)]
+    # bridge: hard-surface puck + sensor
+    objs += [cyl(0.34, 0.16, (0, 0.92, 0.2), (0, 0, 0), white, smooth=False, bevel=0.05)]
+    objs += [cyl(0.12, 0.08, (0, 0.92, 0.3), (0, 0, 0), blue, smooth=True, bevel=0)]
+    # neck (flat) + engineering hull as chamfered box (hard) + deflector
+    objs += [box((0.34, 0.7, 0.12), (0, -0.33, -0.02), (math.radians(8), 0, 0), white)]
+    objs += [box((0.42, 1.4, 0.36), (0, -1.5, -0.05), (0, 0, 0), white, smooth=False, bevel=0.17)]
+    objs += [box((0.3, 0.9, 0.02), (0, -1.5, 0.16), (0, 0, 0), panel)]  # top panel
+    objs += [disc(0.3, 0.1, (0, -0.5, -0.05), copper)]
+    # pylons (flat) + nacelles (round tubes, smooth) + caps + glow strip (mirrored)
     for sx in (-1, 1):
-        objs += [box((0.1, 0.55, 0.1), (sx * 0.55, -1.45, 0.2), (0, 0, sx * -0.5), white)]
-        objs += [cyl(0.22, 2.4, (sx * 0.98, -0.95, 0.38), (math.radians(90), 0, 0), white)]
+        objs += [box((0.1, 0.55, 0.12), (sx * 0.55, -1.45, 0.2), (0, 0, sx * -0.5), white)]
+        objs += [cyl(0.22, 2.4, (sx * 0.98, -0.95, 0.38), (math.radians(90), 0, 0), white, smooth=True, bevel=0.07)]
         objs += [torus(0.24, 0.05, (sx * 0.98, -0.55, 0.38), gold)]
-        objs += [sphere((sx * 0.98, 0.30, 0.38), (0.2, 0.2, 0.2), blue)]
+        objs += [disc(0.2, 0.06, (sx * 0.98, 0.27, 0.38), blue)]  # bussard cap (flat-faced)
         objs += [box((0.05, 1.0, 0.05), (sx * 0.98, -1.0, 0.62), (0, 0, 0), blue)]
     return objs
 
@@ -121,7 +127,7 @@ def add_lights():
     area((0, 5, 2.5), 600, 6, (1.0, 0.9, 0.8))
 
 
-def frame(objs):
+def frame(objs, yaw=0):
     pts = []
     for o in objs:
         for c in o.bound_box: pts.append(o.matrix_world @ Vector(c))
@@ -129,7 +135,8 @@ def frame(objs):
     radius = max((p - center).length for p in pts)
     cd = bpy.data.cameras.new("cam"); cd.type = "ORTHO"; cd.ortho_scale = radius * 2.15
     cam = bpy.data.objects.new("cam", cd); bpy.context.collection.objects.link(cam)
-    d = Vector((0.0, -0.5, 1.0)).normalized()
+    base = Vector((0.0, -0.5, 1.0))                       # top-down 3/4
+    d = (Matrix.Rotation(math.radians(yaw), 4, "Z") @ base).normalized()
     cam.location = center + d * (radius * 4)
     cam.rotation_euler = (center - cam.location).to_track_quat("-Z", "Y").to_euler()
     bpy.context.scene.camera = cam
@@ -151,8 +158,11 @@ def render(path):
 def make(fid):
     reset(); setup_world()
     objs = BUILDERS[fid]()
-    add_lights(); frame(objs)
-    render(os.path.join(OUT, f"{fid}.png")); print("rendered", fid)
+    add_lights()
+    for yaw in (0, 90, 180, 270):
+        frame(objs, yaw)
+        render(os.path.join(OUT, f"{fid}_y{yaw:03d}.png"))
+    print("rendered", fid)
 
 
 if __name__ == "__main__":
