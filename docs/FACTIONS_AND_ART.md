@@ -289,10 +289,42 @@ approved.
   *Veil / Edict / Nightglass*.
 - **Concept:** `shadur-kai.svg`.
 
-> **Per-faction fleets (next step, once silhouettes are approved):** each faction gets
-> 3–5 ships mapped to roles (`miner`, `combat`, hero) built from the shared kit under
-> its palette — e.g. a Consortium `meridian-prospector` (miner) and `aegis-escort`
-> (combat), a Terra Nexum `prospector-rig` and `ironside-gunship`, etc.
+### 5b. Ship classes (per faction)
+
+Every faction fields the **same six ship classes** (one of each at launch), themed in
+its own design language. Classes map to the gameplay roles in `GAME_DESIGN.md` §3:
+
+| Class | Gameplay role | Notes |
+| --- | --- | --- |
+| **Scout** | recon / fast (high `agility`, low HP) | cheap eyes; survives by evasion |
+| **Freighter** | hauler (high `cargo`, weak) | bulk transport / logistics |
+| **Harvester** | miner (high `miningRate` + cargo) | stationed on nodes; needs escort |
+| **Frigate** | combat — light | balanced entry warship |
+| **Destroyer** | combat — medium | heavier weapons/armor |
+| **Cruiser** | combat — heavy / flagship | top-tier hull (the §5 sample ships are cruisers) |
+
+- **48 ships total** at launch: 6 classes × 8 factions.
+- Stats per class follow the ship schema (`TECH_DESIGN.md` §9.1); the class sets the
+  stat profile, the faction sets art + palette + reputation unlocks.
+
+### 5c. Sprite rendering spec (viewing angles)
+
+For the top-down game, each ship is pre-rendered as a **yaw turnaround** at a fixed
+3/4 top-down elevation:
+
+- **15° yaw increments → 360 / 15 = 24 angles per ship.**
+- **Per ship:** 24 sprites. **Per faction:** 24 × 6 classes = **144**. **All factions:**
+  144 × 8 = **1,152 sprites** — before any resolution/LOD variants (we render multiple
+  resolutions per the §3.1b raster pipeline) or future damaged/variant states.
+- **Production render:** `scripts/concept/blender_clean.py` with `ANGLES=24` (default
+  `1` renders just the hero 3/4 for concept review). Output is packed into
+  per-faction **sprite atlases** for PixiJS (`TECH_DESIGN.md` §4).
+- **Elevation/pitch is fixed** (single 3/4 tilt); only yaw varies. If gameplay later
+  needs banking or a steeper top-down, we add elevation rows (multiplying the count).
+
+> **Per-faction fleets (next step):** model the remaining five classes for each faction
+> from the same hard-surface kit under its palette, then render all 24 angles per ship.
+> The §5 sample (one hero hull per faction) establishes each faction's language first.
 
 ---
 
