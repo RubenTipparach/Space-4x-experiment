@@ -16,7 +16,8 @@ const SHIP_SPEED = 150;
 const TURN_RATE = 4;
 const MINE_RATE = 22;
 const CARGO_CAP = 100;
-const HQ = new THREE.Vector3(250, 0, -300);
+const HQ = new THREE.Vector3(250, 0, -300);   // live position; updated each frame (orbits the home planet)
+const HOME_PLANET = 'Verdantia';   // HQ station orbits this world
 const SHIP_Y = 6;                  // hover height above the orbital plane
 const BELT_R = 505;                // belt sits in the gap between Bronce (420) and Halcyon (630)
 
@@ -47,7 +48,7 @@ async function main() {
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 0.95;
   document.getElementById('game')!.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -68,11 +69,14 @@ async function main() {
   // Light ships from the star itself (origin, in the orbital plane) so their sunlit side
   // matches the planets' terminator. A slight lift keeps decks from going fully flat
   // without breaking that consistency; low fill keeps the direction readable.
+  // Key light radiates from the star, so a ship's lit side faces the star (azimuth matches
+  // the planet terminators). A moderate height lets the decks read in the top-down view
+  // without the "lit purely from above" look that broke consistency before.
   const sunLight = new THREE.PointLight(0xfff2d8, 4.0, 0, 0); // decay 0 → reaches the whole system
-  sunLight.position.set(0, 90, 0);
+  sunLight.position.set(0, 190, 0);
   scene.add(sunLight);
-  scene.add(new THREE.HemisphereLight(0x4a5e90, 0x100818, 0.28));
-  // neutral studio environment so metallic ship hulls reflect light instead of reading black
+  scene.add(new THREE.AmbientLight(0x223044, 0.09));   // tiny fill so shadow sides aren't pure black
+  // neutral studio environment only so metal isn't pure black on the dark side (low intensity per-material)
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
@@ -93,6 +97,7 @@ async function main() {
   const spinners: Spinner[] = [];
   const hoverMeshes: { mesh: THREE.Object3D; html: string }[] = [];
   const labels: { el: HTMLDivElement; obj: THREE.Object3D; off: number }[] = [];
+  let homePlanet: THREE.Group | null = null; let homeR = 22;   // HQ orbits this planet
 
   const mkLabel = (text: string, obj: THREE.Object3D, off: number, cls = 'world-label') => {
     const el = document.createElement('div'); el.className = cls; el.textContent = text;
@@ -105,6 +110,7 @@ async function main() {
     g.position.set(Math.cos(p.angle0) * p.orbit, 0, Math.sin(p.angle0) * p.orbit);
     scene.add(g);
     orbiters.push({ group: g, planet: pl, orbit: p.orbit, angle: p.angle0, speed: p.speed });
+    if (p.name === HOME_PLANET) { homePlanet = g; homeR = p.size; }
     if (p.type === 'gas') addRings(g, p.size, p.color);
     mkLabel(p.name, g, p.size + 12);
     hoverMeshes.push({ mesh: g, html: `<div class="t-name">${p.name}${p.type === 'gas' ? ' (gas giant)' : ''}</div><div class="t-tags">${p.tags.map((t) => RESOURCE_LABEL[t]).join(', ')}</div>` });
@@ -139,14 +145,21 @@ async function main() {
     }
   }
 
-  // ---------- HQ ----------
+  // ---------- HQ (a station orbiting the home planet) ----------
+  const HQ_DIST = homeR + 34; let hqAngle = 0.6;
+  const updateHQ = (t: number) => {
+    hqAngle = 0.6 + t * 0.25;
+    const c = homePlanet ? homePlanet.position : new THREE.Vector3();
+    HQ.set(c.x + Math.cos(hqAngle) * HQ_DIST, 0, c.z + Math.sin(hqAngle) * HQ_DIST);
+  };
+  updateHQ(0);
   const hq = new THREE.Group(); hq.position.copy(HQ); scene.add(hq);
-  const hqMesh = new THREE.Mesh(new THREE.OctahedronGeometry(14),
+  const hqMesh = new THREE.Mesh(new THREE.OctahedronGeometry(10),
     new THREE.MeshStandardMaterial({ color: 0x9fd6ff, emissive: 0x2a6ea0, emissiveIntensity: 0.6, metalness: 0.6, roughness: 0.3 }));
   hq.add(hqMesh);
-  hq.add(new THREE.Mesh(new THREE.TorusGeometry(22, 1.2, 8, 48),
+  hq.add(new THREE.Mesh(new THREE.TorusGeometry(15, 1.0, 8, 48),
     new THREE.MeshBasicMaterial({ color: 0x5ec8ff }))).rotation.x = Math.PI / 2;
-  mkLabel('HQ', hq, 26, 'world-label hq');
+  mkLabel('HQ', hq, 18, 'world-label hq');
 
   // ---------- asteroid belt (in the clear gap between Bronce and the gas giants) ----------
   addBelt(scene);
@@ -175,7 +188,17 @@ async function main() {
       // normalize size: scale longest bbox axis to ~24 units
       const box = new THREE.Box3().setFromObject(obj); const size = new THREE.Vector3(); box.getSize(size);
       const s = 24 / Math.max(size.x, size.y, size.z); obj.scale.setScalar(s);
-      obj.traverse((o: any) => { if (o.isMesh && o.material) { o.material.envMapIntensity = 0.5; } });
+      // Shade hulls diffusely (like the planets) so the star's direction reads: tame
+      // metalness, raise roughness, and keep environment reflections minimal.
+      obj.traverse((o: any) => {
+        if (!o.isMesh) return;
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+          if (!m) continue;
+          m.envMapIntensity = 0.1;
+          if (m.metalness !== undefined) m.metalness = Math.min(m.metalness, 0.2);
+          if (m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.6);
+        }
+      });
     } catch (e) {
       obj = new THREE.Mesh(new THREE.ConeGeometry(6, 18, 6), new THREE.MeshStandardMaterial({ color: def.color }));
       console.error('ship load', def.id, e);
@@ -273,6 +296,7 @@ async function main() {
 
     for (const o of orbiters) { o.angle += o.speed * dt; o.group.position.set(Math.cos(o.angle) * o.orbit, 0, Math.sin(o.angle) * o.orbit); o.planet.update(dt, camera.position); }
     for (const s of spinners) { s.angle += s.speed * dt; s.group.position.set(s.parent.position.x + Math.cos(s.angle) * s.dist, 0, s.parent.position.z + Math.sin(s.angle) * s.dist); s.planet.update(dt, camera.position); }
+    updateHQ(T); hq.position.copy(HQ); hq.rotation.y = T * 0.3;   // station orbits the home planet
 
     for (const cm of comets) cm.update(dt);
 
