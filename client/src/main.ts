@@ -18,6 +18,7 @@ const MINE_RATE = 22;
 const CARGO_CAP = 100;
 const HQ = new THREE.Vector3(250, 0, -300);
 const SHIP_Y = 6;                  // hover height above the orbital plane
+const BELT_R = 505;                // belt sits in the gap between Bronce (420) and Halcyon (630)
 
 type Vec = { x: number; z: number };
 interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): THREE.Vector3; }
@@ -50,13 +51,14 @@ async function main() {
   document.getElementById('game')!.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 1, 20000);
-  camera.position.set(0, 760, 980);
+  // narrow FOV + large distance → near-orthographic with a touch of perspective
+  const camera = new THREE.PerspectiveCamera(20, innerWidth / innerHeight, 1, 40000);
+  camera.position.set(0, 2600, 3350);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);
   controls.enableDamping = true; controls.dampingFactor = 0.08;
-  controls.minDistance = 60; controls.maxDistance = 6000;
+  controls.minDistance = 400; controls.maxDistance = 12000;
   controls.maxPolarAngle = Math.PI * 0.49;   // stay above the plane
 
   // ---------- lighting (for the glTF ships; planets self-shade in their shaders) ----------
@@ -71,10 +73,11 @@ async function main() {
   scene.background = new THREE.Color(0x05060c);
   buildStars(scene);
   buildNebula(scene);
+  addPolarGrid(scene, 1450);
 
   // ---------- the star ----------
-  const star = makeStar(46);
-  scene.add(star);
+  const star = makeStar(48);
+  scene.add(star.group);
 
   // ---------- planets / moons / gas nodes ----------
   interface Orbiter { group: THREE.Group; planet: Planet; orbit: number; angle: number; speed: number; }
@@ -139,10 +142,10 @@ async function main() {
     new THREE.MeshBasicMaterial({ color: 0x5ec8ff }))).rotation.x = Math.PI / 2;
   mkLabel('HQ', hq, 26, 'world-label hq');
 
-  // ---------- asteroid belt ----------
+  // ---------- asteroid belt (in the clear gap between Bronce and the gas giants) ----------
   addBelt(scene);
   for (const [frac, res] of [[0.2, 'ore'], [0.65, 'crystal']] as const) {
-    const a = frac * Math.PI * 2, r = 462;
+    const a = frac * Math.PI * 2, r = BELT_R;
     const cluster = new THREE.Mesh(new THREE.IcosahedronGeometry(9, 0),
       new THREE.MeshStandardMaterial({ color: res === 'ore' ? 0xb98a5a : 0x9be8ff, emissive: res === 'ore' ? 0x3a2a14 : 0x184a55, roughness: 0.8, metalness: 0.2, flatShading: true }));
     cluster.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); scene.add(cluster);
@@ -259,7 +262,7 @@ async function main() {
   function frame() {
     const dt = Math.min(0.05, clock.getDelta()); const T = clock.elapsedTime;
     controls.update();
-    (star as any).__glow.uniforms.uViewPos.value.copy(camera.position);
+    star.update(dt, camera.position);
 
     for (const o of orbiters) { o.angle += o.speed * dt; o.group.position.set(Math.cos(o.angle) * o.orbit, 0, Math.sin(o.angle) * o.orbit); o.planet.update(dt, camera.position); }
     for (const s of spinners) { s.angle += s.speed * dt; s.group.position.set(s.parent.position.x + Math.cos(s.angle) * s.dist, 0, s.parent.position.z + Math.sin(s.angle) * s.dist); s.planet.update(dt, camera.position); }
@@ -332,6 +335,17 @@ async function main() {
 const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const vecOf = (v: THREE.Vector3): Vec => ({ x: v.x, z: v.z });
 
+function addPolarGrid(scene: THREE.Scene, maxR: number) {
+  const pts: number[] = [];
+  for (let r = 200; r <= maxR; r += 200) {            // concentric rings
+    let px = r, pz = 0;
+    for (let i = 1; i <= 120; i++) { const a = (i / 120) * Math.PI * 2; const x = Math.cos(a) * r, z = Math.sin(a) * r; pts.push(px, 0, pz, x, 0, z); px = x; pz = z; }
+  }
+  for (let s = 0; s < 24; s++) { const a = (s / 24) * Math.PI * 2; pts.push(0, 0, 0, Math.cos(a) * maxR, 0, Math.sin(a) * maxR); }   // radial spokes
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x35507a, transparent: true, opacity: 0.22 })));
+}
+
 function addOrbitRing(scene: THREE.Scene, r: number) {
   const seg = 128; const pts: THREE.Vector3[] = [];
   for (let i = 0; i <= seg; i++) { const a = (i / seg) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)); }
@@ -350,7 +364,7 @@ function addBelt(scene: THREE.Scene) {
   const mat = new THREE.MeshStandardMaterial({ color: 0x6b6256, roughness: 0.95, flatShading: true });
   const mesh = new THREE.InstancedMesh(geo, mat, N); const m = new THREE.Matrix4(); const q = new THREE.Quaternion();
   for (let i = 0; i < N; i++) {
-    const a = Math.random() * Math.PI * 2; const r = 462 + (Math.random() - 0.5) * 80;
+    const a = Math.random() * Math.PI * 2; const r = BELT_R + (Math.random() - 0.5) * 90;
     const s = 1 + Math.random() * 3;
     q.setFromEuler(new THREE.Euler(Math.random() * 6, Math.random() * 6, Math.random() * 6));
     m.compose(new THREE.Vector3(Math.cos(a) * r, (Math.random() - 0.5) * 10, Math.sin(a) * r), q, new THREE.Vector3(s, s, s));

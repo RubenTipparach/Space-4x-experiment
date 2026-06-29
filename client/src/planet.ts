@@ -190,27 +190,65 @@ export function makePlanet(o: PlanetOpts): Planet {
   };
 }
 
-// The central star: bright emissive core + additive corona shells.
-export function makeStar(radius: number): THREE.Group {
+// The central star: a turbulent photosphere (granulation, sunspots, limb darkening),
+// flickering corona shells, and a soft camera-facing bloom halo.
+const SUN_PHOTO_FRAG = NOISE + `
+uniform float uTime; uniform vec3 uViewPos;
+varying vec3 vLocal; varying vec3 vWN; varying vec3 vWP;
+void main(){
+  vec3 p = normalize(vLocal);
+  float g1 = fbm(p*3.0 + vec3(0.0, uTime*0.04, 0.0));
+  float g2 = fbm(p*9.0 - vec3(uTime*0.07, 0.0, uTime*0.05));
+  float g = g1*0.6 + g2*0.4;
+  vec3 c = mix(vec3(1.0,0.36,0.05), vec3(1.0,0.72,0.24), smoothstep(-0.25,0.3,g));
+  c = mix(c, vec3(1.0,0.95,0.82), smoothstep(0.28,0.62,g));     // bright plages
+  float spot = smoothstep(0.5,0.72, fbm(p*4.0 + 19.0));
+  c = mix(c, vec3(0.55,0.16,0.04), spot*0.55);                  // sunspots
+  vec3 N = normalize(vWN); vec3 V = normalize(uViewPos - vWP);
+  float limb = pow(max(dot(N,V),0.0), 0.5);                     // limb darkening
+  c *= (0.55 + 0.45*limb);
+  gl_FragColor = vec4(c * 1.7, 1.0);                            // HDR-ish → ACES rolls the core to white-hot
+}`;
+const SUN_CORONA_FRAG = NOISE + `
+uniform float uTime; uniform vec3 uViewPos; uniform vec3 uColor; uniform float uPow; uniform float uGain;
+varying vec3 vLocal; varying vec3 vWN; varying vec3 vWP;
+void main(){
+  vec3 N = normalize(vWN); vec3 V = normalize(uViewPos - vWP);
+  float rim = pow(1.0 - max(dot(N,V),0.0), uPow);
+  vec3 p = normalize(vLocal);
+  float flick = 0.65 + 0.45*fbm(p*4.0 + vec3(uTime*0.25, uTime*0.15, 0.0));
+  gl_FragColor = vec4(uColor * rim * flick * uGain, rim);
+}`;
+
+export interface Star { group: THREE.Group; update(dt: number, camPos: THREE.Vector3): void; }
+
+export function makeStar(radius: number): Star {
   const g = new THREE.Group();
-  const core = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 48, 32),
-    new THREE.MeshBasicMaterial({ color: 0xfff2c0 }),
-  );
-  g.add(core);
-  const glowMat = new THREE.ShaderMaterial({
-    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide,
-    uniforms: { uViewPos: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(0xffcf86) } },
-    vertexShader: VERT,
-    fragmentShader: `
-      uniform vec3 uViewPos; uniform vec3 uColor;
-      varying vec3 vWN; varying vec3 vWP;
-      void main(){ vec3 N=normalize(vWN); vec3 V=normalize(uViewPos-vWP);
-        float rim = pow(1.0 - max(dot(N,V),0.0), 2.0);
-        gl_FragColor = vec4(uColor, rim*0.9); }`,
+  const photoMat = new THREE.ShaderMaterial({
+    vertexShader: VERT, fragmentShader: SUN_PHOTO_FRAG,
+    uniforms: { uTime: { value: 0 }, uViewPos: { value: new THREE.Vector3() } },
   });
-  const glow = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.8, 48, 32), glowMat);
-  (g as any).__glow = glowMat;
-  g.add(glow);
-  return g;
+  g.add(new THREE.Mesh(SPHERE, photoMat)).scale.setScalar(radius);
+
+  const coronas: THREE.ShaderMaterial[] = [];
+  const shell = (scale: number, pow: number, gain: number, color: number) => {
+    const m = new THREE.ShaderMaterial({
+      vertexShader: VERT, fragmentShader: SUN_CORONA_FRAG,
+      uniforms: { uTime: { value: 0 }, uViewPos: { value: new THREE.Vector3() }, uColor: { value: new THREE.Color(color) }, uPow: { value: pow }, uGain: { value: gain } },
+      transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    g.add(new THREE.Mesh(SPHERE, m)).scale.setScalar(radius * scale); coronas.push(m);
+  };
+  shell(1.35, 2.2, 1.2, 0xffd89a);   // tight chromosphere
+  shell(2.6, 2.4, 0.8, 0xff9a4a);    // outer corona glow
+
+  let t = 0;
+  return {
+    group: g,
+    update(dt, camPos) {
+      t += dt;
+      photoMat.uniforms.uTime.value = t; photoMat.uniforms.uViewPos.value.copy(camPos);
+      for (const m of coronas) { m.uniforms.uTime.value = t; m.uniforms.uViewPos.value.copy(camPos); }
+    },
+  };
 }
