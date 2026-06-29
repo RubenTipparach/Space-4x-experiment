@@ -178,13 +178,11 @@ def consortium():
     o += [box((0.12, 0.16, 0.08), (0, 0.85, 0.7), (0, 0, 0), blue)]  # bridge light
     # deflector glow recessed at the chin
     o += [disc(0.22, 0.08, (0, 1.0, -0.28), copper)]
-    o += [box((1.0, 0.05, 0.4), (0, 0.0, 0.02), (0, 0, 0), gold)]  # waterline trim band
-    # FLAT nacelles: smaller blades held OUT on pylons (mirrored), rear engine glow
+    # FLAT nacelles: small blades held OUT on pylons (mirrored), rear engine glow
     o += pair(lambda sx: [
-        box((0.55, 0.16, 0.1), (sx * 0.92, -0.35, 0.06), (0, 0, 0), white, bevel=0.04),   # pylon strut (out)
-        box((0.32, 1.35, 0.12), (sx * 1.28, -0.5, 0.06), (0, 0, sx * 0.04), white, bevel=0.06),  # nacelle
-        box((0.26, 0.1, 0.09), (sx * 1.28, -1.18, 0.06), (0, 0, 0), blue),               # engine glow (rear)
-        box((0.3, 0.05, 0.13), (sx * 1.28, 0.18, 0.06), (0, 0, 0), gold),                # leading-edge trim
+        box((0.5, 0.14, 0.09), (sx * 0.88, -0.3, 0.06), (0, 0, 0), white, bevel=0.04),    # pylon strut (out)
+        box((0.24, 1.05, 0.1), (sx * 1.18, -0.45, 0.06), (0, 0, sx * 0.03), white, bevel=0.05),  # nacelle
+        box((0.2, 0.09, 0.08), (sx * 1.18, -0.95, 0.06), (0, 0, 0), blue),                # engine glow (rear)
     ])
     return o
 
