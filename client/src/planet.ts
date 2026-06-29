@@ -75,7 +75,7 @@ void main(){
   float spec = (1.0-isLand) * pow(max(dot(N,H),0.0), 80.0) * 0.9;
   // day lighting with soft terminator + ambient
   float day = smoothstep(-0.12, 0.22, ndl);
-  vec3 col = albedo * (0.14 + 1.2*max(ndl,0.0)) + spec*vec3(1.0);
+  vec3 col = albedo * (0.22 + 1.2*max(ndl,0.0)) + spec*vec3(1.0);
   // night-side city lights on land
   float night = 1.0 - smoothstep(-0.04, 0.1, ndl);
   float cities = isLand * smoothstep(0.55,0.6, fbm(sp*7.0)) * night;
@@ -97,7 +97,7 @@ void main(){
   float spot = smoothstep(0.16,0.0, length(p - normalize(vec3(0.55,-0.25,0.7))));
   col = mix(col, vec3(0.85,0.42,0.32), spot*0.85);
   vec3 N = normalize(vWN); vec3 sun = normalize(-vWP);
-  col *= (0.13 + 1.15*max(dot(N,sun),0.0));
+  col *= (0.2 + 1.15*max(dot(N,sun),0.0));
   gl_FragColor = vec4(col, 1.0);
 }`;
 

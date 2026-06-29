@@ -74,7 +74,7 @@ async function main() {
   const sunLight = new THREE.PointLight(0xfff2d8, 4.0, 0, 0); // decay 0 → constant across the system
   sunLight.position.set(0, 0, 0);
   scene.add(sunLight);
-  scene.add(new THREE.AmbientLight(0xb9c8e0, 0.12));   // matches the planets' ambient term
+  scene.add(new THREE.AmbientLight(0xb9c8e0, 0.22));   // a bit of ambient on every object (matches planet ambient)
 
   // ---------- background: starfield + nebula dome ----------
   scene.background = new THREE.Color(0x05060c);
@@ -190,6 +190,8 @@ async function main() {
           if (!m) continue;
           if (m.metalness !== undefined) m.metalness = Math.min(m.metalness, 0.15);
           if (m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.65);
+          // drop mesh-emissive "glow spots" for now (proper emissive textures come later)
+          if (m.emissive) { m.emissive.setHex(0x000000); m.emissiveIntensity = 0; m.emissiveMap = null; }
         }
       });
     } catch (e) {
