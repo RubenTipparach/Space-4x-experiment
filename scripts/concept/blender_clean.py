@@ -92,6 +92,16 @@ def wing(span, chord, thick, loc, sweep, mat, tilt=0.0):  # swept hard-surface w
     return box((span, chord, thick), loc, (tilt, 0, sweep), mat, smooth=False, bevel=0.04)
 
 
+def nacelle(loc, length, r, mat, glow, kind="cyl", bevel=0.04):
+    """An engine pod aligned along Y (forward). kind: 'cyl' (circular), 'diamond'
+    (4-gon, point-up), 'hex' (6-gon). Glowing cap at the rear. Use instead of wings."""
+    sides = {"cyl": 32, "hex": 6, "diamond": 4}[kind]
+    body = prism(sides, r, length, loc, (math.radians(90), 0, 0), mat,
+                 smooth=(kind == "cyl"), bevel=bevel)
+    cap = disc(r * 0.72, 0.05, (loc[0], loc[1] - length / 2.0, loc[2]), glow)
+    return [body, cap]
+
+
 def offside(obj, gap=0.06):
     """Enforce the asymmetry rule: a detail shape must lie entirely on one side of
     the centerline (x=0). If its bounding box straddles x=0, push it fully to the
@@ -202,16 +212,18 @@ def kareth():  # nature/bioluminescent — wide lofted manta, jade + cyan-green 
     jade = pmat("jade", (0.18, 0.55, 0.42), 0.5, 0.42)
     glow = emat("glow", (0.49, 1.0, 0.77), 11)
     o = []
-    shape = xs_lens(w=1.0, h=0.42)
-    stations = [(1.55, 0.12, 0.10, 0.0), (1.0, 0.7, 0.4, 0.03), (0.2, 1.5, 0.5, 0.04),
-                (-0.6, 1.35, 0.46, 0.0), (-1.25, 0.7, 0.32, -0.03), (-1.55, 0.18, 0.14, -0.04)]
+    # slim, elongated organic hull (narrow lens)
+    shape = xs_lens(w=0.7, h=0.42)
+    stations = [(2.0, 0.08, 0.08, 0.0), (1.3, 0.34, 0.32, 0.03), (0.4, 0.5, 0.44, 0.04),
+                (-0.5, 0.46, 0.4, 0.0), (-1.3, 0.3, 0.26, -0.03), (-1.8, 0.1, 0.12, -0.04)]
     o += [loft_hull(shape, stations, green, bevel=0.06)]
-    # bioluminescent veins (centered + mirrored), crystal accents on pylons, rear glow
-    o += [box((0.06, 2.2, 0.05), (0, -0.1, 0.34), (0, 0, 0), glow)]
-    o += pair(lambda sx: box((0.05, 1.1, 0.04), (sx * 0.5, 0.1, 0.3), (0, 0, sx * 0.12), glow))
-    o += pair(lambda sx: [box((0.4, 0.1, 0.06), (sx * 1.15, 0.2, 0.06), (0, 0, 0), jade),       # pylon
-                          prism(4, 0.16, 0.5, (sx * 1.5, 0.2, 0.1), (math.radians(90), 0, math.radians(45)), glow, bevel=0)])
-    o += [disc(0.32, 0.08, (0, -1.05, 0), glow)]
+    # bioluminescent veins (centered + mirrored)
+    o += [box((0.05, 2.4, 0.04), (0, 0.0, 0.34), (0, 0, 0), glow)]
+    o += pair(lambda sx: box((0.04, 1.2, 0.035), (sx * 0.28, 0.2, 0.3), (0, 0, sx * 0.08), glow))
+    # slim diamond nacelles on thin pylons + crystal accent
+    o += pair(lambda sx: [box((0.3, 0.08, 0.05), (sx * 0.55, 0.0, 0.05), (0, 0, 0), jade),
+                          *nacelle((sx * 0.82, -0.1, 0.05), 1.5, 0.12, green, glow, "diamond")])
+    o += [disc(0.26, 0.07, (0, -1.3, 0), glow)]
     return o
 
 
@@ -248,10 +260,11 @@ def illumaria():  # shadow — long flat lofted arrow, swept wings, magenta glow
     stations = [(2.2, 0.05, 0.05, 0.0), (1.4, 0.5, 0.26, 0.02), (0.4, 0.9, 0.32, 0.02),
                 (-0.5, 0.78, 0.3, 0.0), (-1.4, 0.45, 0.22, -0.02), (-1.85, 0.12, 0.1, -0.03)]
     o += [loft_hull(shape, stations, dark, bevel=0.04)]
-    o += [box((0.18, 0.7, 0.14), (0, 0.5, 0.18), (0, 0, 0), trim)]  # centered dorsal sensor
-    o += pair(lambda sx: [box((0.4, 0.12, 0.06), (sx * 0.85, -0.45, 0.02), (0, 0, 0), dark),   # pylon
-                          wing(1.5, 0.95, 0.07, (sx * 1.35, -0.55, 0.02), sx * -0.5, dark)])
-    o += [disc(0.24, 0.06, (0, -1.7, 0), glow)]
+    o += [box((0.16, 0.7, 0.12), (0, 0.5, 0.16), (0, 0, 0), trim)]  # centered dorsal sensor
+    # parallel diamond nacelles on thin pylons (no wings)
+    o += pair(lambda sx: [box((0.45, 0.1, 0.05), (sx * 0.7, -0.3, 0.0), (0, 0, 0), dark),
+                          *nacelle((sx * 1.0, -0.45, 0.0), 1.9, 0.16, dark, glow, "diamond")])
+    o += [disc(0.18, 0.05, (0, -1.7, 0), glow)]
     return o
 
 
@@ -265,11 +278,9 @@ def astryn():  # rebels — lofted keel fighter, scrappy one-sided detail, olive
     stations = [(1.7, 0.08, 0.08, 0.0), (1.1, 0.34, 0.32, 0.02), (0.3, 0.55, 0.46, 0.03),
                 (-0.5, 0.55, 0.44, 0.0), (-1.2, 0.4, 0.34, -0.02), (-1.5, 0.12, 0.14, -0.03)]
     o += [loft_hull(shape, stations, olive, bevel=0.05)]
-    # mirrored wings on pylons + engines
-    o += pair(lambda sx: [box((0.35, 0.12, 0.07), (sx * 0.75, -0.2, 0.04), (0, 0, 0), dark),    # pylon
-                          wing(1.3, 0.7, 0.07, (sx * 1.25, -0.3, 0.04), sx * -0.32, olive)])
-    o += pair(lambda sx: [cyl(0.18, 0.55, (sx * 0.4, -1.15, 0), (math.radians(90), 0, 0), dark),
-                          disc(0.15, 0.05, (sx * 0.4, -1.4, 0), glow)])
+    # chunky circular nacelles on pylons (no wings) — scrappy, mismatched detail
+    o += pair(lambda sx: [box((0.4, 0.1, 0.07), (sx * 0.7, -0.25, 0.03), (0, 0, 0), dark),
+                          *nacelle((sx * 1.05, -0.35, 0.03), 1.4, 0.22, olive, glow, "hex")])
     # one-sided scrappy detail
     o += [offside(box((0.4, 0.5, 0.4), (-0.55, 0.2, 0.16), (0, 0, 0), dark))]        # patch panel L
     o += [offside(box((0.13, 0.6, 0.13), (0.6, 0.35, 0.2), (0, 0, 0), orange))]      # sensor pod R
@@ -286,9 +297,9 @@ def ezrathi():  # void cult — tall narrow lofted monolith, obsidian, green/vio
     stations = [(1.8, 0.08, 0.14, 0.0), (1.2, 0.4, 0.7, 0.0), (0.3, 0.62, 1.0, 0.0),
                 (-0.5, 0.55, 0.9, 0.0), (-1.3, 0.34, 0.55, 0.0), (-1.7, 0.12, 0.2, -0.02)]
     o += [loft_hull(shape, stations, obs, bevel=0.03)]
-    # mirrored sharp shards on pylons (ritual blades)
-    o += pair(lambda sx: [box((0.35, 0.1, 0.1), (sx * 0.7, 0.1, 0.2), (0, 0, sx * 0.2), violet),  # pylon
-                          box((0.22, 1.2, 0.22), (sx * 1.2, 0.1, 0.25), (0, 0, sx * 0.18), violet, bevel=0.03)])
+    # mirrored PARALLEL ritual nacelles (diamond pods) on pylons
+    o += pair(lambda sx: [box((0.35, 0.1, 0.1), (sx * 0.62, 0.1, 0.2), (0, 0, 0), violet),
+                          *nacelle((sx * 0.95, 0.0, 0.22), 1.7, 0.16, violet, glow, "diamond")])
     # centered void core + rune + violet drive
     o += [prism(8, 0.3, 0.2, (0, 0.2, 0.55), (0, 0, 0), glow, bevel=0)]
     o += [box((0.5, 0.05, 0.05), (0, 0.2, 0.62), (0, 0, 0), glow)]
@@ -302,18 +313,19 @@ def krithul():  # plague — bulbous lofted lens, one-sided lumps, toxic glow
     dark = pmat("dark", (0.3, 0.32, 0.12), 0.2, 0.85)
     glow = emat("glow", (0.78, 1.0, 0.23), 12)
     o = []
-    shape = xs_round(w=1.0, h=0.85)
-    stations = [(1.35, 0.22, 0.2, 0.0), (0.7, 0.7, 0.6, 0.0), (0.0, 1.0, 0.85, 0.0),
-                (-0.7, 0.85, 0.7, 0.0), (-1.3, 0.5, 0.42, 0.0), (-1.6, 0.2, 0.18, -0.03)]
+    # skinnier bulbous body (narrower round section, longer)
+    shape = xs_round(w=0.7, h=0.8)
+    stations = [(1.6, 0.16, 0.16, 0.0), (0.9, 0.5, 0.5, 0.0), (0.1, 0.68, 0.72, 0.0),
+                (-0.7, 0.58, 0.6, 0.0), (-1.4, 0.36, 0.36, 0.0), (-1.75, 0.14, 0.14, -0.03)]
     o += [loft_hull(shape, stations, flesh, bevel=0.1, smooth=True)]
-    o += [disc(0.32, 0.07, (0, -1.0, 0), glow)]                # centered drive
-    o += [sphere((0, 0.5, 0.55), (0.16, 0.16, 0.16), glow)]    # centered pustule
-    # one-sided diseased lumps (offside) + glow pustules
-    o += [offside(box((0.6, 0.8, 0.5), (0.65, 0.4, 0.1), (0, 0, math.radians(12)), flesh, bevel=0.16))]
-    o += [offside(box((0.5, 0.6, 0.45), (-0.6, -0.2, 0.0), (0, 0, math.radians(-10)), flesh, bevel=0.16))]
-    o += [offside(sphere((0.6, -0.2, 0.4), (0.14, 0.14, 0.14), glow))]
-    o += [offside(sphere((-0.5, 0.2, 0.38), (0.16, 0.16, 0.16), glow))]
-    o += pair(lambda sx: cyl(0.1, 1.0, (sx * 0.34, -1.1, -0.05), (math.radians(72), 0, sx * 0.2), dark))
+    o += [disc(0.26, 0.07, (0, -1.2, 0), glow)]                # centered drive
+    o += [sphere((0, 0.6, 0.5), (0.13, 0.13, 0.13), glow)]     # centered pustule
+    # one-sided diseased lumps (offside) + glow pustules — kept slimmer
+    o += [offside(box((0.42, 0.7, 0.4), (0.5, 0.4, 0.05), (0, 0, math.radians(12)), flesh, bevel=0.14))]
+    o += [offside(box((0.36, 0.55, 0.36), (-0.48, -0.2, 0.0), (0, 0, math.radians(-10)), flesh, bevel=0.14))]
+    o += [offside(sphere((0.5, -0.15, 0.32), (0.12, 0.12, 0.12), glow))]
+    o += [offside(sphere((-0.42, 0.25, 0.32), (0.13, 0.13, 0.13), glow))]
+    o += pair(lambda sx: cyl(0.08, 1.0, (sx * 0.28, -1.2, -0.05), (math.radians(72), 0, sx * 0.18), dark))
     return o
 
 
@@ -326,11 +338,11 @@ def shadur():  # rogue stealth — long narrow lofted dagger, swept tail fins, c
     stations = [(2.3, 0.05, 0.08, 0.0), (1.4, 0.34, 0.42, 0.0), (0.4, 0.5, 0.6, 0.0),
                 (-0.6, 0.44, 0.54, 0.0), (-1.5, 0.3, 0.36, 0.0), (-2.0, 0.1, 0.12, 0.0)]
     o += [loft_hull(shape, stations, dark, bevel=0.03)]
-    # mirrored swept tail fins on pylons (rear)
-    o += pair(lambda sx: [box((0.3, 0.1, 0.06), (sx * 0.45, -1.1, 0), (0, 0, 0), dark),       # pylon
-                          wing(1.0, 0.55, 0.06, (sx * 0.85, -1.2, 0), sx * -0.7, dark, tilt=-0.12)])
+    # slim parallel diamond nacelles on thin pylons (no fins/wings)
+    o += pair(lambda sx: [box((0.32, 0.08, 0.05), (sx * 0.42, -0.55, 0), (0, 0, 0), dark),
+                          *nacelle((sx * 0.62, -0.65, 0), 1.5, 0.1, dark, glow, "diamond")])
     o += [disc(0.14, 0.05, (0, 0.85, 0.25), glow)]  # cockpit
-    o += [disc(0.22, 0.06, (0, -1.55, 0), glow)]    # drive
+    o += [disc(0.2, 0.06, (0, -1.55, 0), glow)]     # drive
     return o
 
 
