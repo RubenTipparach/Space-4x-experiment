@@ -112,36 +112,81 @@ def pair(fn):
     return out
 
 
+def loft_hull(shape, stations, mat, bevel=0.04, smooth=False, name="hull"):
+    """Build a main body by lofting a cross-section along the length (Y).
+
+    shape    : unit cross-section as [(ux, uz), ...] (defines the FRONT profile).
+    stations : [(y, width, height, z_offset), ...] nose->tail; width(y) defines the
+               TOP profile, height(y)+z_offset defines the SIDE profile.
+    A hull whose three silhouettes are all non-rectangular reads at a distance.
+    Symmetric by construction (shape is mirrored about x=0)."""
+    import bmesh
+    bm = bmesh.new()
+    rings = []
+    for (y, w, h, dz) in stations:
+        rings.append([bm.verts.new((ux * w, y, uz * h + dz)) for (ux, uz) in shape])
+    n = len(shape)
+    for a, b in zip(rings, rings[1:]):
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((a[i], a[j], b[j], b[i]))
+    bm.faces.new(list(reversed(rings[0])))   # nose cap
+    bm.faces.new(list(rings[-1]))            # tail cap
+    bm.normal_update()
+    me = bpy.data.meshes.new(name); bm.to_mesh(me); bm.free()
+    obj = bpy.data.objects.new(name, me); bpy.context.collection.objects.link(obj)
+    return finish(obj, mat, smooth, bevel)
+
+
+# cross-section unit shapes (x = right, z = up); kept symmetric about x = 0
+def xs_keel(top=1.0, bottom=-0.55, shoulder=0.25, w=1.0):
+    # peaked top, angled sides, narrow keel -> arrow/house front profile
+    return [(0, top), (w, shoulder), (0.62 * w, bottom), (-0.62 * w, bottom), (-w, shoulder)]
+
+def xs_lens(w=1.0, h=0.6):
+    # flattened hexagon -> lens/blade front profile
+    return [(0, h), (w, 0.2 * h), (0.7 * w, -h), (-0.7 * w, -h), (-w, 0.2 * h)]
+
+def xs_diamond():
+    return [(0, 1.0), (1.0, 0.0), (0, -0.7), (-1.0, 0.0)]
+
+
 # ---------------- builders (forward = +Y, up = +Z) ----------------
 def consortium():
-    # hard-surface: chamfered discs/boxes, flat panels; smooth only on round tubes
+    # profile-first: a lofted main body with a unique 3-view silhouette, flat nacelles
     white = pmat("white", (0.84, 0.87, 0.92), 0.55, 0.34)
-    panel = pmat("panel", (0.66, 0.71, 0.78), 0.6, 0.4)
+    panel = pmat("panel", (0.62, 0.67, 0.74), 0.6, 0.4)
     gold = pmat("gold", (0.83, 0.63, 0.22), 0.95, 0.25)
-    blue = emat("blue", (0.30, 0.72, 1.0), 14)
+    blue = emat("blue", (0.30, 0.72, 1.0), 13)
     copper = emat("copper", (1.0, 0.6, 0.3), 6)
-    objs = []
-    # saucer: chamfered cylinder (flat deck + tapered rim), raised inner panel, gold rim
-    objs += [cyl(1.62, 0.26, (0, 0.85, 0), (0, 0, 0), white, smooth=True, bevel=0.17)]
-    objs += [cyl(1.04, 0.06, (0, 0.9, 0.15), (0, 0, 0), panel, smooth=True, bevel=0.04)]
-    objs += [cyl(0.5, 0.05, (0, 0.95, 0.19), (0, 0, 0), panel, smooth=True, bevel=0.03)]
-    objs += [torus(1.62, 0.05, (0, 0.85, 0.0), gold)]
-    # bridge: hard-surface puck + sensor
-    objs += [cyl(0.34, 0.16, (0, 0.92, 0.2), (0, 0, 0), white, smooth=False, bevel=0.05)]
-    objs += [cyl(0.12, 0.08, (0, 0.92, 0.3), (0, 0, 0), blue, smooth=True, bevel=0)]
-    # neck (flat) + engineering hull as chamfered box (hard) + deflector
-    objs += [box((0.34, 0.7, 0.12), (0, -0.33, -0.02), (math.radians(8), 0, 0), white)]
-    objs += [box((0.42, 1.4, 0.36), (0, -1.5, -0.05), (0, 0, 0), white, smooth=False, bevel=0.17)]
-    objs += [box((0.3, 0.9, 0.02), (0, -1.5, 0.16), (0, 0, 0), panel)]  # top panel
-    objs += [disc(0.3, 0.1, (0, -0.5, -0.05), copper)]
-    # pylons (flat) + nacelles (round tubes, smooth) + caps + glow strip (mirrored)
-    for sx in (-1, 1):
-        objs += [box((0.1, 0.55, 0.12), (sx * 0.55, -1.45, 0.2), (0, 0, sx * -0.5), white)]
-        objs += [cyl(0.22, 2.4, (sx * 0.98, -0.95, 0.38), (math.radians(90), 0, 0), white, smooth=True, bevel=0.07)]
-        objs += [torus(0.24, 0.05, (sx * 0.98, -0.55, 0.38), gold)]
-        objs += [disc(0.2, 0.06, (sx * 0.98, 0.27, 0.38), blue)]  # bussard cap (flat-faced)
-        objs += [box((0.05, 1.0, 0.05), (sx * 0.98, -1.0, 0.62), (0, 0, 0), blue)]
-    return objs
+    o = []
+    # MAIN BODY: keel cross-section (arrow front), spindle top profile, raised-spine side
+    shape = xs_keel(top=1.0, bottom=-0.5, shoulder=0.18, w=1.0)
+    stations = [
+        (1.95, 0.06, 0.06, 0.00),   # nose point
+        (1.45, 0.34, 0.30, 0.02),
+        (0.75, 0.62, 0.52, 0.04),   # tall shoulder
+        (-0.05, 0.72, 0.50, 0.02),  # widest
+        (-0.95, 0.55, 0.40, -0.02),
+        (-1.65, 0.34, 0.26, -0.04),
+        (-1.95, 0.10, 0.12, -0.04), # tail
+    ]
+    o += [loft_hull(shape, stations, white, bevel=0.05)]
+    # dorsal spine ridge + bridge (keeps the peaked side profile reading)
+    o += [box((0.12, 1.5, 0.12), (0, 0.4, 0.55), (0, 0, 0), panel, bevel=0.03)]
+    o += [box((0.26, 0.5, 0.16), (0, 0.7, 0.6), (0, 0, 0), white, bevel=0.05)]
+    o += [box((0.12, 0.16, 0.08), (0, 0.85, 0.7), (0, 0, 0), blue)]  # bridge light
+    # deflector glow recessed at the chin
+    o += [disc(0.22, 0.08, (0, 1.0, -0.28), copper)]
+    o += [box((1.0, 0.05, 0.4), (0, 0.0, 0.02), (0, 0, 0), gold)]  # waterline trim band
+    # FLAT nacelles: thin wide blades (not tubes), mirrored, with rear engine glow
+    o += pair(lambda sx: [
+        box((0.5, 1.7, 0.14), (sx * 0.95, -0.55, 0.05), (0, 0, sx * 0.05), white, bevel=0.06),
+        box((0.16, 0.7, 0.18), (sx * 0.6, -0.35, 0.05), (0, 0, sx * -0.4), white, bevel=0.05),  # pylon
+        box((0.42, 0.12, 0.1), (sx * 0.95, -1.42, 0.05), (0, 0, 0), blue),  # engine glow (rear)
+        box((0.46, 0.05, 0.16), (sx * 0.95, 0.32, 0.05), (0, 0, 0), gold),  # leading-edge trim
+    ])
+    return o
 
 
 def kareth():  # organic-nature, but hard-surface angular manta + crystal accents
@@ -191,7 +236,6 @@ def illumaria():  # sleek dark stealth arrowhead, magenta glow
     o += [nose_cone(0.5, 1.2, 1.7, dark, verts=4)]
     for sx in (-1, 1):
         o += [wing(1.9, 0.9, 0.09, (sx * 0.95, -0.5, 0), sx * -0.5, dark)]
-    o += [box((0.1, 2.4, 0.12), (0, -0.1, 0.34), (0, 0, 0), glow)]  # spine
     o += [disc(0.26, 0.06, (0, -1.45, 0), glow)]
     return o
 
@@ -262,7 +306,6 @@ def shadur():  # clean knife-edge stealth dagger, cyan glow
     o += [nose_cone(0.42, 1.4, 1.9, dark, verts=4)]
     for sx in (-1, 1):
         o += [wing(1.3, 0.6, 0.08, (sx * 0.7, -1.0, 0), sx * -0.7, dark, tilt=-0.15)]
-        o += [box((0.04, 2.2, 0.06), (sx * 0.34, -0.1, 0.28), (0, 0, 0), glow)]  # edge line
     o += [disc(0.16, 0.05, (0, 0.9, 0.2), glow)]  # cockpit
     o += [disc(0.24, 0.06, (0, -1.5, 0), glow)]  # drive
     return o
@@ -298,7 +341,7 @@ def add_lights():
     area((0, 5, 2.5), 600, 6, (1.0, 0.9, 0.8))
 
 
-def frame(objs, yaw=0):
+def _cam(objs, dir_vec, up):
     pts = []
     for o in objs:
         for c in o.bound_box: pts.append(o.matrix_world @ Vector(c))
@@ -306,11 +349,27 @@ def frame(objs, yaw=0):
     radius = max((p - center).length for p in pts)
     cd = bpy.data.cameras.new("cam"); cd.type = "ORTHO"; cd.ortho_scale = radius * 2.15
     cam = bpy.data.objects.new("cam", cd); bpy.context.collection.objects.link(cam)
-    base = Vector((0.0, -0.5, 1.0))                       # top-down 3/4
-    d = (Matrix.Rotation(math.radians(yaw), 4, "Z") @ base).normalized()
-    cam.location = center + d * (radius * 4)
-    cam.rotation_euler = (center - cam.location).to_track_quat("-Z", "Y").to_euler()
+    cam.location = center + dir_vec.normalized() * (radius * 4)
+    cam.rotation_euler = (center - cam.location).to_track_quat("-Z", up).to_euler()
     bpy.context.scene.camera = cam
+
+
+def frame(objs, yaw=0):  # top-down 3/4, rotated by yaw about Z
+    base = Vector((0.0, -0.5, 1.0))
+    _cam(objs, Matrix.Rotation(math.radians(yaw), 4, "Z") @ base, "Y")
+
+
+VIEWS = {
+    "hero": (Vector((0, -0.5, 1.0)), "Y"),
+    "top": (Vector((0, 0, 1)), "Y"),
+    "side": (Vector((1, 0, 0)), "Z"),
+    "front": (Vector((0, -1, 0)), "Z"),
+}
+
+
+def frame_view(objs, name):
+    d, up = VIEWS[name]
+    _cam(objs, d, up)
 
 
 def render(path):
@@ -338,13 +397,26 @@ def make(fid, yaws):
     print("rendered", fid, f"({len(yaws)} angle(s))")
 
 
+def make_views(fid):  # orthographic proof: top / side / front + hero 3/4
+    reset(); setup_world()
+    objs = BUILDERS[fid]()
+    add_lights()
+    for v in ("hero", "top", "side", "front"):
+        frame_view(objs, v)
+        render(os.path.join(OUT, f"{fid}_{v}.png"))
+    print("rendered views", fid)
+
+
 if __name__ == "__main__":
-    # ANGLES env controls yaw count: production = 24 (15° steps); default 1 (hero 3/4).
-    n = int(os.environ.get("ANGLES", "1"))
-    step = 360.0 / n
-    yaws = [round(i * step) for i in range(n)]
     ids = [a for a in sys.argv[1:] if not a.startswith("-")] or list(BUILDERS)
-    for fid in ids:
-        if fid in BUILDERS:
-            make(fid, yaws)
+    if os.environ.get("VIEWS"):
+        for fid in ids:
+            if fid in BUILDERS: make_views(fid)
+    else:
+        # ANGLES env controls yaw count: production = 24 (15° steps); default 1 (hero).
+        n = int(os.environ.get("ANGLES", "1"))
+        step = 360.0 / n
+        yaws = [round(i * step) for i in range(n)]
+        for fid in ids:
+            if fid in BUILDERS: make(fid, yaws)
     print("done")

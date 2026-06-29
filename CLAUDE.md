@@ -36,10 +36,16 @@ Messy ships come from asymmetric parts straddling the centerline. The discipline
 
 1. **Orientation:** forward = `+Y` (nose), up = `+Z`, right = `+X`. The centerline is
    the plane `x = 0`.
-2. **Build a symmetric core first.** Core hull pieces are either **centered on `x = 0`**
-   (so they're symmetric about the centerline) or added as **mirrored pairs** via
-   `pair(lambda sx: ...)`. Major features (wings, nacelles, engines, fins) should be
-   mirrored pairs — not one-off asymmetric shapes.
+2. **Build the main body from a profile, not stacked boxes.** The hull is the most
+   important part and must read at a distance, so give it a **unique silhouette in all
+   three views** (top, side, front). Use **`loft_hull(shape, stations, ...)`**: a
+   cross-section `shape` (the FRONT profile) lofted along the length, with per-station
+   `width` (the TOP profile) and `height`+`z_offset` (the SIDE profile). If all three
+   silhouettes are non-rectangular, the ship type is identifiable from far away. Avoid
+   plain boxes/discs for the core. Build a **symmetric core first** — `loft_hull` is
+   symmetric by construction; other core pieces are **centered on `x = 0`** or added as
+   **mirrored pairs** via `pair(lambda sx: ...)`. Major features (wings, nacelles,
+   engines, fins) are mirrored pairs, never one-off asymmetric shapes.
 3. **Add asymmetry only as detail that never crosses the centerline.** Any non-centered,
    non-mirrored shape must lie **entirely on one side** of `x = 0`. Wrap every such
    shape in **`offside(...)`**, which asserts/pushes the shape so its bounding box does
