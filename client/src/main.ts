@@ -28,7 +28,8 @@ const BELT_R = 505;                // belt sits in the gap between Bronce (420) 
 type Vec = { x: number; z: number };
 interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): THREE.Vector3; }
 interface Ship {
-  def: typeof FACTIONS[number]; obj: THREE.Object3D; disc: THREE.Mesh; beam: THREE.Mesh; path: THREE.Line;
+  def: typeof FACTIONS[number]; obj: THREE.Object3D; disc: THREE.Mesh; destMarker: THREE.Mesh;
+  beam: THREE.Mesh; path: THREE.Line;
   pos: Vec; heading: number; speed: number; omega: number;
   state: 'idle' | 'moving' | 'mining' | 'returning';
   moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null;
@@ -177,7 +178,8 @@ async function main() {
 
   // ---------- fleet (glTF ships) ----------
   const loader = new GLTFLoader();
-  const discGeo = new THREE.RingGeometry(16, 19, 48);
+  const discGeo = new THREE.CircleGeometry(17, 44);          // faint flat disc under each ship (hover/select target)
+  const destGeo = new THREE.RingGeometry(9, 12, 44);          // pulsing destination marker
   const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
   await Promise.all(FACTIONS.map(async (def, i) => {
     let obj: THREE.Object3D;
@@ -208,17 +210,22 @@ async function main() {
     holder.position.set(start.x, SHIP_Y, start.z); scene.add(holder);
     (holder.userData as any).shipIndex = i;
 
-    const disc = new THREE.Mesh(discGeo, new THREE.MeshBasicMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
-    disc.rotation.x = -Math.PI / 2; disc.position.set(start.x, 1, start.z); disc.visible = false; scene.add(disc);
+    // faint disc under every ship — always visible, glows on hover, brightest when selected.
+    // It's also the click/hover target (big & flat = easy to hit).
+    const disc = new THREE.Mesh(discGeo, new THREE.MeshBasicMaterial({ color: 0x4a90c0, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }));
+    disc.rotation.x = -Math.PI / 2; disc.position.set(start.x, 1, start.z); (disc.userData as any).shipIndex = i; scene.add(disc);
+    // pulsing ring at the ordered destination
+    const destMarker = new THREE.Mesh(destGeo, new THREE.MeshBasicMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+    destMarker.rotation.x = -Math.PI / 2; destMarker.visible = false; scene.add(destMarker);
     const beam = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
     beam.visible = false; scene.add(beam);
-    // dashed trajectory line to the ordered destination
+    // dashed trajectory line = the EXACT predicted flight path (rebuilt each frame)
     const path = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
-      new THREE.LineDashedMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.55, dashSize: 9, gapSize: 7 }));
+      new THREE.LineDashedMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.6, dashSize: 9, gapSize: 7 }));
     path.visible = false; scene.add(path);
 
-    ships[i] = { def, obj: holder, disc, beam, path, pos: { ...start }, heading: 0, speed: 0, omega: 0, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null };
+    ships[i] = { def, obj: holder, disc, destMarker, beam, path, pos: { ...start }, heading: 0, speed: 0, omega: 0, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null };
   }));
 
   // ---------- raycasting: select ships / move / mine ----------
@@ -226,14 +233,15 @@ async function main() {
   const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const ndc = new THREE.Vector2();
   let downX = 0, downY = 0;
+  let hovered = -1;   // ship index under the cursor (disc glows)
   renderer.domElement.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; });
   renderer.domElement.addEventListener('pointerup', (e) => {
     if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6) return;   // was a camera drag
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, camera);
-    // 1) ship?
-    const shipHits = ray.intersectObjects(ships.map((s) => s.obj), true);
-    if (shipHits.length) { let o: THREE.Object3D | null = shipHits[0].object; while (o && (o.userData as any).shipIndex === undefined) o = o.parent; if (o) { selectShip((o.userData as any).shipIndex); return; } }
+    // 1) ship? select via its disc (big flat target = easy to click)
+    const discHits = ray.intersectObjects(ships.map((s) => s.disc), false);
+    if (discHits.length) { selectShip((discHits[0].object.userData as any).shipIndex); return; }
     // 2) mine target?
     const mineHits = ray.intersectObjects(mineTargets.length ? hoverMeshes.map((h) => h.mesh) : [], true);
     let mh: THREE.Object3D | null = mineHits[0]?.object ?? null;
@@ -279,6 +287,10 @@ async function main() {
     tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px';
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, camera);
+    // ship discs glow on hover (and are the click target)
+    const discHits = ray.intersectObjects(ships.filter(Boolean).map((s) => s.disc), false);
+    hovered = discHits.length ? (discHits[0].object.userData as any).shipIndex : -1;
+    renderer.domElement.style.cursor = hovered >= 0 ? 'pointer' : 'default';
     const hits = ray.intersectObjects(hoverMeshes.map((h) => h.mesh), true);
     if (hits.length) { let o: THREE.Object3D | null = hits[0].object; const found = hoverMeshes.find((h) => { let x: THREE.Object3D | null = o; while (x) { if (x === h.mesh) return true; x = x.parent; } return false; }); if (found) { tip.innerHTML = found.html; tip.hidden = false; return; } }
     tip.hidden = true;
@@ -304,7 +316,9 @@ async function main() {
 
 
     const pulse = 0.55 + 0.45 * Math.sin(T * 6);
-    for (const s of ships) {
+    const destPulse = 1 + 0.28 * Math.sin(T * 3.2);   // destination ring breathes
+    for (let idx = 0; idx < ships.length; idx++) {
+      const s = ships[idx];
       if (!s) continue;
       s.beam.visible = false;
 
@@ -334,9 +348,19 @@ async function main() {
 
       // glTF nose points -Z → rotate by heading+π so the nose leads
       s.obj.position.set(s.pos.x, SHIP_Y, s.pos.z); s.obj.rotation.y = s.heading + Math.PI;
-      s.disc.visible = ships[selected] === s;
-      if (s.disc.visible) { s.disc.position.set(s.pos.x, 1, s.pos.z); (s.disc.material as THREE.MeshBasicMaterial).opacity = 0.6 + 0.4 * pulse; }
-      updatePath(s, lineTo);
+
+      // faint disc under every ship; glow on hover, brightest when selected
+      s.disc.position.set(s.pos.x, 1, s.pos.z);
+      const dm = s.disc.material as THREE.MeshBasicMaterial;
+      const sel = selected === idx, hov = hovered === idx;
+      dm.opacity = sel ? 0.5 : hov ? 0.4 : 0.12;
+      dm.color.setHex(sel ? 0x9fe6ff : hov ? 0x8fd8ff : 0x4a90c0);
+
+      // pulsing destination marker
+      if (lineTo) { s.destMarker.visible = true; s.destMarker.position.set(lineTo.x, 1.5, lineTo.z); s.destMarker.scale.setScalar(destPulse); }
+      else s.destMarker.visible = false;
+
+      updatePath(s, dest, arriveR);   // EXACT predicted flight path
     }
 
     // billboard HTML labels
@@ -375,22 +399,29 @@ const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 // --- ship flight model: forward thrust + turning, all with bounded acceleration ---
 // Heading θ → forward = (sinθ, cosθ). The ship only moves along its nose (no sliding).
-function steer(s: Ship, T: Vec, arriveR: number, dt: number): boolean {
-  const dx = T.x - s.pos.x, dz = T.z - s.pos.z;
+// navStep advances ONE nav state by dt and returns whether it has arrived. The live
+// ship and the trajectory prediction both run this exact function → the drawn path is
+// the ship's real future motion.
+interface NavState { x: number; z: number; heading: number; speed: number; omega: number; }
+function navStep(st: NavState, T: Vec, arriveR: number, dt: number): boolean {
+  const dx = T.x - st.x, dz = T.z - st.z;
   const dist = Math.hypot(dx, dz);
-  const err = angWrap(Math.atan2(dx, dz) - s.heading);
-  // angular: aim for the turn rate that can still brake to 0 exactly on the bearing,
-  // then move ω toward it within the angular-accel budget (no sudden ω jumps)
+  const err = angWrap(Math.atan2(dx, dz) - st.heading);
   const omegaDes = clamp(Math.sign(err) * Math.sqrt(2 * ANG_ACCEL * Math.abs(err)), -MAX_OMEGA, MAX_OMEGA);
-  s.omega += clamp(omegaDes - s.omega, -ANG_ACCEL * dt, ANG_ACCEL * dt);
-  s.heading = angWrap(s.heading + s.omega * dt);
-  // linear: arrive (brake to 0 at arriveR), and throttle back while not facing the target
+  st.omega += clamp(omegaDes - st.omega, -ANG_ACCEL * dt, ANG_ACCEL * dt);
+  st.heading = angWrap(st.heading + st.omega * dt);
   const face = Math.max(0, Math.cos(err));
   const vDes = Math.min(MAX_SPEED, Math.sqrt(2 * DECEL * Math.max(0, dist - arriveR))) * face * face;
-  s.speed += clamp(vDes - s.speed, -DECEL * dt, ACCEL * dt);   // bounded accel/decel
-  s.pos.x += Math.sin(s.heading) * s.speed * dt;
-  s.pos.z += Math.cos(s.heading) * s.speed * dt;
-  return dist <= arriveR && s.speed < 5;
+  st.speed += clamp(vDes - st.speed, -DECEL * dt, ACCEL * dt);
+  st.x += Math.sin(st.heading) * st.speed * dt;
+  st.z += Math.cos(st.heading) * st.speed * dt;
+  return dist <= arriveR && st.speed < 5;
+}
+const navOf = (s: Ship): NavState => ({ x: s.pos.x, z: s.pos.z, heading: s.heading, speed: s.speed, omega: s.omega });
+function applyNav(s: Ship, st: NavState) { s.pos.x = st.x; s.pos.z = st.z; s.heading = st.heading; s.speed = st.speed; s.omega = st.omega; }
+
+function steer(s: Ship, T: Vec, arriveR: number, dt: number): boolean {
+  const st = navOf(s); const arrived = navStep(st, T, arriveR, dt); applyNav(s, st); return arrived;
 }
 function coast(s: Ship, dt: number) {   // no orders: ease ω and thrust to zero, glide to a stop
   s.omega += clamp(-s.omega, -ANG_ACCEL * dt, ANG_ACCEL * dt);
@@ -403,10 +434,13 @@ function dockPoint(s: Ship, bp: THREE.Vector3, radius: number): Vec {
   const dx = s.pos.x - bp.x, dz = s.pos.z - bp.z; const L = Math.hypot(dx, dz) || 1; const r = radius + 14;
   return { x: bp.x + dx / L * r, z: bp.z + dz / L * r };
 }
-function updatePath(s: Ship, to: Vec | null) {
-  if (!to) { s.path.visible = false; return; }
-  const p = s.path.geometry.attributes.position as THREE.BufferAttribute;
-  p.setXYZ(0, s.pos.x, 2, s.pos.z); p.setXYZ(1, to.x, 2, to.z); p.needsUpdate = true;
+// Forward-simulate the EXACT flight model to arrival and draw the resulting curve.
+const PATH_DT = 1 / 40, PATH_MAX = 480;
+function updatePath(s: Ship, T: Vec | null, arriveR: number) {
+  if (!T) { s.path.visible = false; return; }
+  const st = navOf(s); const pts: number[] = [st.x, 2, st.z];
+  for (let i = 0; i < PATH_MAX; i++) { const done = navStep(st, T, arriveR, PATH_DT); pts.push(st.x, 2, st.z); if (done) break; }
+  s.path.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   s.path.computeLineDistances(); s.path.visible = true;
 }
 
