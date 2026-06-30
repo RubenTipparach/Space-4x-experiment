@@ -106,12 +106,17 @@ export function makeHQCity(renderer: THREE.WebGLRenderer, background: THREE.Text
   // buildings: admin in the center, the rest on a ring
   const groups = new Map<string, THREE.Group>();
   const ring = facilities.filter((f) => f.key !== 'admin');
+  // clone each mesh's material so a building can glow on hover independently, and remember
+  // its base emissive to restore afterward.
+  const cloneMats = (g: THREE.Group, facKey: string) => g.traverse((o: any) => {
+    (o.userData as any).facKey = facKey;
+    if (o.isMesh && o.material) { o.material = o.material.clone(); o.userData.baseEmHex = o.material.emissive ? o.material.emissive.getHex() : 0; o.userData.baseEI = o.material.emissiveIntensity ?? 0; }
+  });
   const placeOne = (f: Facility) => {
     const grp = buildStructure(f.key, levelOf(f.key));
     if (f.key === 'admin') grp.position.set(0, 1, 0);
     else { const i = ring.indexOf(f); const a = (i / ring.length) * Math.PI * 2; grp.position.set(Math.cos(a) * 18, 1, Math.sin(a) * 18); grp.rotation.y = -a + Math.PI / 2; }
-    (grp.userData as any).facKey = f.key;
-    grp.traverse((o: any) => { if (o.isMesh) (o.userData as any).facKey = f.key; });
+    (grp.userData as any).facKey = f.key; cloneMats(grp, f.key);
     groups.set(f.key, grp); platform.add(grp);
   };
   facilities.forEach(placeOne);
@@ -139,13 +144,20 @@ export function makeHQCity(renderer: THREE.WebGLRenderer, background: THREE.Text
   camera.position.set(46, 40, 46);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 6, 0); controls.enableDamping = true; controls.dampingFactor = 0.08;
-  controls.minDistance = 35; controls.maxDistance = 140; controls.maxPolarAngle = Math.PI * 0.46;
-  controls.autoRotate = true; controls.autoRotateSpeed = 0.35; controls.enablePan = false; controls.enabled = false;
+  controls.minDistance = 35; controls.maxDistance = 140;
+  controls.enableRotate = false;            // fixed iso angle — no rotation
+  controls.enablePan = true; controls.screenSpacePanning = true;   // pan around the city
+  controls.enabled = false;
 
   const ray = new THREE.Raycaster(); let hovered: string | null = null; let clock = 0;
-  const setEmissive = (key: string, mul: number) => {
-    const g = groups.get(key); if (!g) return;
-    g.traverse((o: any) => { if (o.isMesh && o.material && o.material.emissive) { o.userData.baseEI ??= o.material.emissiveIntensity; o.material = o.material; o.material.emissiveIntensity = o.userData.baseEI * mul; } });
+  // each building owns CLONED materials so it can glow on hover without affecting the others
+  const setGlow = (k: string, on: boolean) => {
+    const g = groups.get(k); if (!g) return;
+    g.traverse((o: any) => {
+      if (!o.isMesh || !o.material) return;
+      if (on) { o.material.emissive.setHex(0x7fdcff); o.material.emissiveIntensity = (o.userData.baseEI ?? 0) + 1.0; }
+      else { o.material.emissive.setHex(o.userData.baseEmHex ?? 0x000000); o.material.emissiveIntensity = o.userData.baseEI ?? 0; }
+    });
   };
 
   return {
@@ -161,8 +173,8 @@ export function makeHQCity(renderer: THREE.WebGLRenderer, background: THREE.Text
     },
     setHover(k) {
       if (k === hovered) return;
-      if (hovered) setEmissive(hovered, 1);
-      hovered = k; if (k) setEmissive(k, 2.4);
+      if (hovered) setGlow(hovered, false);
+      hovered = k; if (k) setGlow(k, true);
       renderer.domElement.style.cursor = k ? 'pointer' : 'default';
     },
     refresh(k, level) {
@@ -170,9 +182,9 @@ export function makeHQCity(renderer: THREE.WebGLRenderer, background: THREE.Text
       const pos = old.position.clone(), rot = old.rotation.clone();
       platform.remove(old);
       const grp = buildStructure(k, level); grp.position.copy(pos); grp.rotation.copy(rot);
-      (grp.userData as any).facKey = k; grp.traverse((o: any) => { if (o.isMesh) (o.userData as any).facKey = k; });
-      groups.set(k, grp); platform.add(grp); if (hovered === k) setEmissive(k, 2.4);
+      (grp.userData as any).facKey = k; cloneMats(grp, k);
+      groups.set(k, grp); platform.add(grp); if (hovered === k) setGlow(k, true);
     },
-    setEnabled(on) { controls.enabled = on; controls.autoRotate = on; },
+    setEnabled(on) { controls.enabled = on; },
   };
 }

@@ -339,10 +339,10 @@ async function main() {
     hqCity.resize(innerWidth, innerHeight); hqCity.setEnabled(true);
     hqOpen = true; controls.enabled = false; hqSel = null; hqUI.hidden = false; renderHQPanel();
     for (const L of labels) L.el.style.display = 'none';   // hide system world-labels behind the city
-    tip.hidden = true;
+    tip.hidden = true; hqBtn.textContent = 'Solar System';
   }
-  function closeHQ() { hqOpen = false; hqUI.hidden = true; controls.enabled = true; if (hqCity) hqCity.setEnabled(false); renderer.domElement.style.cursor = 'default'; }
-  hqBtn.onclick = openHQ;
+  function closeHQ() { hqOpen = false; hqUI.hidden = true; controls.enabled = true; if (hqCity) hqCity.setEnabled(false); renderer.domElement.style.cursor = 'default'; hqBtn.textContent = 'HQ City'; }
+  hqBtn.onclick = () => (hqOpen ? closeHQ() : openHQ());
 
   // ---------- galaxy data + interstellar travel ----------
   let galaxy: { systems: any[]; links: number[][]; meta: any } | null = null;
