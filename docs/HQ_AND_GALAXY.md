@@ -43,17 +43,22 @@ deducts resources if affordable and increments the level.
 
 ### Slice scope (what's built now)
 
-- Overlay with a facility card per structure: name, level, description, cost, **Upgrade**
-  button (enabled only when affordable; deducts from HQ stores).
-- A simple "city" header; the real isometric/3D city render is a follow-up.
-- Costs/levels are real and persist for the session; **facility *effects* are stubs**
-  (levels go up and resources are spent, but gameplay hooks like build speed / caps come
-  later). This is the slice scaffold to iterate on.
+- **Interactive isometric 3D city** (`client/src/hqcity.ts`): a hex platform floating in
+  space with one **distinct building per facility** (Admin Spire center; Crew Quarters,
+  Research Lab, Academy, Shipyard, Trading Post, Foundry, Sensor Array on a ring), glowing
+  lanes/beacons, and the nebula skybox behind it. Its own Three.js scene + OrbitControls
+  (drag to orbit, scroll to zoom, slow auto-rotate); hovering a building highlights it.
+- Click a building → an HTML panel shows its name, level, description and upgrade cost with
+  an **Upgrade** button (enabled only when affordable; deducts from HQ stores). Upgrading
+  **regrows the building** (taller / more floors / extra stacks).
+- Costs/levels are real and persist for the session; **facility *effects* are still stubs**
+  (levels rise and resources are spent, but gameplay hooks like build speed / caps come
+  later).
 
 ### Later
 
-- 3D/iso city view with placeable buildings; per-facility detail panels; build queue in
-  the Shipyard; research tree from the Lab; contracts in the Trading Post.
+- Placeable/reorderable buildings; per-facility detail screens; build queue in the
+  Shipyard; research tree from the Lab; contracts in the Trading Post; crew/officer assign.
 
 ## 3. Galaxy map — local cluster (vertical slice)
 

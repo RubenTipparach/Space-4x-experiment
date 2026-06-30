@@ -111,3 +111,14 @@ canvas { display: block; }
 .fac-up:disabled { opacity: .4; cursor: not-allowed; }
 .galcanvas { width: 100%; height: auto; border-radius: 8px; border: 1px solid #1c2c44; margin-top: 6px; background: #05060c; }
 .gal-label { height: 18px; margin-top: 6px; color: #bcd2ff; font: 12px 'Segoe UI'; }
+
+/* ---- HQ City 3D screen overlay UI (rides on top of the 3D scene) ---- */
+.hq-ui { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 16;
+  width: min(440px, 92vw); background: rgba(8,14,24,0.82); border: 1px solid #2f4a6a;
+  border-radius: 12px; padding: 12px 16px; backdrop-filter: blur(3px); }
+.hq-ui[hidden] { display: none; }
+.hq-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.hq-head h2 { margin: 0; font: 700 16px 'Segoe UI'; color: #eaf1fb; }
+.hq-hint { color: #8fa6c4; font: 12px 'Segoe UI'; }
+.hq-sel { display: flex; flex-direction: column; gap: 6px; }
+.hq-sel .fac-up { margin-top: 4px; }

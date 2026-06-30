@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { makePlanet, makeStar, makeNebula, type Planet } from './planet.ts';
+import { makeHQCity, type HQCity } from './hqcity.ts';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
@@ -84,7 +85,8 @@ async function main() {
   scene.add(new THREE.AmbientLight(0xb9c8e0, 0.22));   // a bit of ambient on every object (matches planet ambient)
 
   // ---------- background: starfield + nebula dome ----------
-  scene.background = makeNebula(renderer);   // baked raymarched volumetric nebula (static cubemap)
+  const nebulaTex = makeNebula(renderer);    // baked raymarched volumetric nebula (static cubemap)
+  scene.background = nebulaTex;
   buildStars(scene);
   addPolarGrid(scene, 1450);
 
@@ -236,8 +238,10 @@ async function main() {
   let hovered = -1;   // ship index under the cursor (disc glows)
   renderer.domElement.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; });
   renderer.domElement.addEventListener('pointerup', (e) => {
-    if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6) return;   // was a camera drag
+    const moved = Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6;
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    if (hqOpen) { if (!moved && hqCity) { hqSel = hqCity.pick(ndc); renderHQPanel(); } return; }   // HQ city: click a building
+    if (moved) return;   // was a camera drag
     ray.setFromCamera(ndc, camera);
     // 1) ship? select via its ring or hull (whole footprint is clickable)
     const discHits = ray.intersectObjects(ships.flatMap((s) => [s.disc, s.obj]), true);
@@ -308,25 +312,36 @@ async function main() {
   const costOf = (f: typeof FACILITIES[number], lvl: number) =>
     Object.entries(f.base).map(([k, v]) => [k as ResourceTag, Math.round((v as number) * Math.pow(1.6, lvl - 1))] as const);
 
-  const hqOverlay = document.createElement('div'); hqOverlay.className = 'overlay'; hqOverlay.hidden = true; document.body.appendChild(hqOverlay);
-  function renderHQ() {
-    const cards = FACILITIES.map((f) => {
+  // HQ City is an interactive 3D scene (see hqcity.ts); this HTML panel rides on top of it.
+  let hqCity: HQCity | null = null, hqOpen = false, hqSel: string | null = null;
+  const hqUI = document.createElement('div'); hqUI.className = 'hq-ui'; hqUI.hidden = true; document.body.appendChild(hqUI);
+  function renderHQPanel() {
+    const f = FACILITIES.find((x) => x.key === hqSel);
+    const detail = f ? (() => {
       const lvl = facLevel[f.key]; const cost = costOf(f, lvl);
       const afford = cost.every(([k, v]) => resources[k] >= v);
       const costStr = cost.map(([k, v]) => `${RESOURCE_LABEL[k]} ${v}`).join(' · ');
-      return `<div class="fac-card"><div class="fac-top"><span class="fac-name">${f.name}</span><span class="fac-lvl">Lv ${lvl}</span></div>
-        <div class="fac-desc">${f.desc}</div><div class="fac-cost">${costStr}</div>
-        <button class="fac-up" data-k="${f.key}" ${afford ? '' : 'disabled'}>Upgrade</button></div>`;
-    }).join('');
-    hqOverlay.innerHTML = `<div class="ov-panel"><div class="ov-head"><h2>Headquarters — Thallian Reach</h2><button class="ov-close">✕</button></div>
-      <div class="ov-sub">Space city · spend HQ stores to upgrade facilities</div><div class="fac-grid">${cards}</div></div>`;
-    hqOverlay.querySelector('.ov-close')!.addEventListener('click', () => { hqOverlay.hidden = true; });
-    hqOverlay.querySelectorAll<HTMLButtonElement>('.fac-up').forEach((btn) => btn.addEventListener('click', () => {
-      const f = FACILITIES.find((x) => x.key === btn.dataset.k)!; const cost = costOf(f, facLevel[f.key]);
-      if (cost.every(([k, v]) => resources[k] >= v)) { cost.forEach(([k, v]) => (resources[k] -= v)); facLevel[f.key]++; renderHQ(); updateHud(); }
-    }));
+      return `<div class="hq-sel"><div class="fac-top"><span class="fac-name">${f.name}</span><span class="fac-lvl">Lv ${lvl}</span></div>
+        <div class="fac-desc">${f.desc}</div><div class="fac-cost">Upgrade cost: ${costStr}</div>
+        <button class="fac-up" ${afford ? '' : 'disabled'}>Upgrade to Lv ${lvl + 1}</button></div>`;
+    })() : `<div class="hq-hint">Click a building to inspect and upgrade it. Drag to orbit · scroll to zoom.</div>`;
+    hqUI.innerHTML = `<div class="hq-head"><h2>Headquarters — Thallian Reach</h2><button class="ov-close">✕</button></div>${detail}`;
+    hqUI.querySelector('.ov-close')!.addEventListener('click', closeHQ);
+    const up = hqUI.querySelector<HTMLButtonElement>('.fac-up');
+    if (up && f) up.addEventListener('click', () => {
+      const cost = costOf(f, facLevel[f.key]);
+      if (cost.every(([k, v]) => resources[k] >= v)) { cost.forEach(([k, v]) => (resources[k] -= v)); facLevel[f.key]++; hqCity!.refresh(f.key, facLevel[f.key]); renderHQPanel(); updateHud(); }
+    });
   }
-  hqBtn.onclick = () => { hqOverlay.hidden = false; renderHQ(); };
+  function openHQ() {
+    if (!hqCity) hqCity = makeHQCity(renderer, nebulaTex, FACILITIES, (k) => facLevel[k]);
+    hqCity.resize(innerWidth, innerHeight); hqCity.setEnabled(true);
+    hqOpen = true; controls.enabled = false; hqSel = null; hqUI.hidden = false; renderHQPanel();
+    for (const L of labels) L.el.style.display = 'none';   // hide system world-labels behind the city
+    tip.hidden = true;
+  }
+  function closeHQ() { hqOpen = false; hqUI.hidden = true; controls.enabled = true; if (hqCity) hqCity.setEnabled(false); renderer.domElement.style.cursor = 'default'; }
+  hqBtn.onclick = openHQ;
 
   const galOverlay = document.createElement('div'); galOverlay.className = 'overlay'; galOverlay.hidden = true; document.body.appendChild(galOverlay);
   let galaxy: { systems: any[]; links: number[][]; meta: any } | null = null;
@@ -365,8 +380,9 @@ async function main() {
     };
   }
   window.addEventListener('pointermove', (e) => {
-    tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px';
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    if (hqOpen) { if (hqCity) hqCity.setHover(hqCity.pick(ndc)); return; }   // HQ city: hover buildings
+    tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px';
     ray.setFromCamera(ndc, camera);
     // ship rings glow on hover (ring or hull both count)
     const discHits = ray.intersectObjects(ships.filter(Boolean).flatMap((s) => [s.disc, s.obj]), true);
@@ -382,6 +398,7 @@ async function main() {
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+    if (hqCity) hqCity.resize(innerWidth, innerHeight);
   });
 
   // ---------- loop ----------
@@ -390,6 +407,7 @@ async function main() {
   let hudAcc = 0;
   function frame() {
     const dt = Math.min(0.05, clock.getDelta()); const T = clock.elapsedTime;
+    if (hqOpen && hqCity) { hqCity.update(dt); renderer.render(hqCity.scene, hqCity.camera); requestAnimationFrame(frame); return; }
     controls.update();
     star.update(dt, camera.position);
 
