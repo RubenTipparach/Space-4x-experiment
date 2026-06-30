@@ -83,9 +83,8 @@ async function main() {
   scene.add(new THREE.AmbientLight(0xb9c8e0, 0.22));   // a bit of ambient on every object (matches planet ambient)
 
   // ---------- background: starfield + nebula dome ----------
-  scene.background = new THREE.Color(0x05060c);
+  scene.background = makeNebula(renderer);   // baked raymarched volumetric nebula (static cubemap)
   buildStars(scene);
-  const nebula = makeNebula(); scene.add(nebula);   // shader skybox (3D-noise), follows the camera
   addPolarGrid(scene, 1450);
 
   // ---------- the star ----------
@@ -297,7 +296,6 @@ async function main() {
   function frame() {
     const dt = Math.min(0.05, clock.getDelta()); const T = clock.elapsedTime;
     controls.update();
-    nebula.position.copy(camera.position);   // keep the skybox infinitely far (no parallax)
     star.update(dt, camera.position);
 
     for (const o of orbiters) { o.angle += o.speed * dt; o.group.position.set(Math.cos(o.angle) * o.orbit, 0, Math.sin(o.angle) * o.orbit); o.planet.update(dt, camera.position); }
