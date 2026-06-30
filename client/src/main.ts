@@ -7,6 +7,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { makePlanet, makeStar, makeNebula, type Planet } from './planet.ts';
 import { makeHQCity, type HQCity } from './hqcity.ts';
+import { makeGalaxy3D, makeHyperspace, type Galaxy3D, type Hyperspace } from './galaxymap.ts';
 import {
   FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
@@ -242,6 +243,16 @@ async function main() {
     const moved = Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6;
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     if (hqOpen) { if (!moved && hqCity) { hqSel = hqCity.pick(ndc); renderHQPanel(); } return; }   // HQ city: click a building
+    if (galOpen) {   // galaxy map: click a star to send the selected ship there
+      if (moved || !galaxy3d) return;
+      const i = galaxy3d.pickStar(ndc); const s = ships[selected];
+      if (i == null || !s) return;
+      if (s.voyage) { flashHint(`${s.def.name} is already in transit`); return; }
+      if (i === s.system) { flashHint(`${s.def.name} is already there`); return; }
+      const r = routeTo(s.system, i); if (!r) { flashHint('no route'); return; }
+      departTo(s, r); flashHint(`${s.def.name} → ${galaxy!.systems[i].name} (${Math.round(routeEta(r))}s)`);
+      return;
+    }
     if (moved) return;   // was a camera drag
     ray.setFromCamera(ndc, camera);
     // 1) ship? select via its ring or hull (whole footprint is clickable)
@@ -342,7 +353,7 @@ async function main() {
     tip.hidden = true; hqBtn.textContent = 'Solar System';
   }
   function closeHQ() { hqOpen = false; hqUI.hidden = true; controls.enabled = true; if (hqCity) hqCity.setEnabled(false); renderer.domElement.style.cursor = 'default'; hqBtn.textContent = 'HQ City'; }
-  hqBtn.onclick = () => (hqOpen ? closeHQ() : openHQ());
+  hqBtn.onclick = () => { if (hqOpen) closeHQ(); else { if (galOpen) closeGalaxy(); openHQ(); } };
 
   // ---------- galaxy data + interstellar travel ----------
   let galaxy: { systems: any[]; links: number[][]; meta: any } | null = null;
@@ -370,62 +381,45 @@ async function main() {
   function departTo(s: Ship, route: number[]) { s.voyage = { route, i: 0, t: 0 }; s.docked = false; s.mine = null; s.moveTo = null; s.state = 'idle'; s.speed = 0; }
   function onArrive(s: Ship) { if (s.system === 0) { s.pos = { x: HQ.x, z: HQ.z }; s.heading = 0; s.speed = 0; s.state = 'idle'; s.docked = true; } }
 
-  // ---------- galaxy map overlay ----------
-  const galOverlay = document.createElement('div'); galOverlay.className = 'overlay'; galOverlay.hidden = true; document.body.appendChild(galOverlay);
-  let galOpen = false, galHover = -1, galScreen: { x: number; y: number }[] = [], galTf = { px: (x: number) => x, py: (y: number) => y };
-  let galCv: HTMLCanvasElement | null = null, galLabel: HTMLElement | null = null;
-  function buildGalaxyUI() {
-    galOverlay.innerHTML = `<div class="ov-panel ov-wide"><div class="ov-head"><h2>Local Cluster — ${galaxy!.systems.length} systems</h2><button class="ov-close">✕</button></div>
-      <div class="ov-sub">Select a ship, then click a system to send it (~1 min per jump lane). Hover a star for details.</div>
-      <canvas class="galcanvas" width="980" height="600"></canvas><div class="gal-label"></div></div>`;
-    galCv = galOverlay.querySelector('.galcanvas'); galLabel = galOverlay.querySelector('.gal-label');
-    const g = galaxy!, W = galCv!.width, H = galCv!.height, R = g.meta.radius * 1.1, sc = Math.min((W / 2) / R, (H / 2) / R);
-    galTf = { px: (x) => W / 2 + x * sc, py: (y) => H / 2 + y * sc };
-    galScreen = g.systems.map((s) => ({ x: galTf.px(s.x), y: galTf.py(s.y) }));
-    galOverlay.querySelector('.ov-close')!.addEventListener('click', () => { galOpen = false; galOverlay.hidden = true; });
-    const toCanvas = (e: MouseEvent) => { const rect = galCv!.getBoundingClientRect(); return { x: (e.clientX - rect.left) * (W / rect.width), y: (e.clientY - rect.top) * (H / rect.height) }; };
-    const nearest = (m: { x: number; y: number }) => { let best = -1, bd = 169; galScreen.forEach((p, i) => { const d = (p.x - m.x) ** 2 + (p.y - m.y) ** 2; if (d < bd) { bd = d; best = i; } }); return best; };
-    galCv!.onmousemove = (e) => {
-      galHover = nearest(toCanvas(e));
-      if (galLabel) { const s = ships[selected]; if (galHover >= 0) { const sy = g.systems[galHover]; const r = s ? routeTo(s.system, galHover) : null; const eta = r && r.length > 1 ? `  ·  ${Math.round(routeEta(r))}s via ${r.length - 1} jump${r.length > 2 ? 's' : ''}` : ''; galLabel.textContent = `${sy.name} · ${sy.star.class}-class · ${sy.planets} planets${galHover === 0 ? ' · HOME' : ''}${eta}`; } else galLabel.textContent = ''; }
-    };
-    galCv!.onclick = (e) => {
-      const i = nearest(toCanvas(e)); const s = ships[selected]; if (i < 0 || !s) return;
-      if (s.voyage) { flashHint(`${s.def.name} is already in transit`); return; }
-      if (i === s.system) { flashHint(`${s.def.name} is already there`); return; }
-      const r = routeTo(s.system, i); if (!r) { flashHint('no route'); return; }
-      departTo(s, r); flashHint(`${s.def.name} → ${g.systems[i].name} (${Math.round(routeEta(r))}s)`);
-    };
+  // ---------- 3D galaxy map + hyperspace (its own scenes; see galaxymap.ts) ----------
+  // The map renders on the main canvas (the fleet hotbar stays visible) so you can pick
+  // a ship and order it to a star; a ship in transit shows the hyperspace tunnel instead.
+  let galaxy3d: Galaxy3D | null = null, hyper: Hyperspace | null = null;
+  let galOpen = false, galHover = -1, hyperShip = -1;
+  const galLabel = document.createElement('div'); galLabel.className = 'gal-hud'; galLabel.hidden = true; document.body.appendChild(galLabel);
+  function galFleet() {
+    return ships.map((s, i) => { const gp = shipGalPos(s); return { x: gp.x, z: gp.y, color: s.def.color, sel: i === selected, visible: true }; });
   }
-  galBtn.onclick = () => { if (!galaxy) return; galOpen = true; galOverlay.hidden = false; buildGalaxyUI(); };
-  function renderGalaxy() {
-    if (!galCv || !galaxy) return; const ctx = galCv.getContext('2d')!; const W = galCv.width, H = galCv.height, g = galaxy;
-    ctx.fillStyle = '#05060c'; ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(110,150,210,0.16)'; ctx.lineWidth = 1; ctx.beginPath();
-    for (const [a, b] of g.links) { ctx.moveTo(galScreen[a].x, galScreen[a].y); ctx.lineTo(galScreen[b].x, galScreen[b].y); } ctx.stroke();
-    // route preview for the selected ship to the hovered system
-    const sel = ships[selected];
-    if (sel && galHover >= 0 && !sel.voyage) { const r = routeTo(sel.system, galHover); if (r && r.length > 1) { ctx.strokeStyle = '#7fdcff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(galScreen[r[0]].x, galScreen[r[0]].y); for (const n of r.slice(1)) ctx.lineTo(galScreen[n].x, galScreen[n].y); ctx.stroke(); } }
-    // active voyages
-    ctx.strokeStyle = 'rgba(127,220,255,0.5)'; ctx.setLineDash([5, 5]);
-    for (const s of ships) if (s.voyage) { const v = s.voyage; ctx.beginPath(); ctx.moveTo(galScreen[v.route[v.i]].x, galScreen[v.route[v.i]].y); for (let k = v.i + 1; k < v.route.length; k++) ctx.lineTo(galScreen[v.route[k]].x, galScreen[v.route[k]].y); ctx.stroke(); }
-    ctx.setLineDash([]);
-    g.systems.forEach((s, i) => {
-      const rad = i === 0 ? 5 : 2.6 + (s.planets > 9 ? 1.4 : 0);
-      ctx.beginPath(); ctx.fillStyle = '#' + (s.star.color as number).toString(16).padStart(6, '0'); ctx.arc(galScreen[i].x, galScreen[i].y, i === galHover ? rad + 2 : rad, 0, 7); ctx.fill();
-      if (i === 0) { ctx.strokeStyle = '#7fdcff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(galScreen[i].x, galScreen[i].y, 9, 0, 7); ctx.stroke(); }
-    });
-    // fleet markers
-    ships.forEach((s, i) => {
-      const gp = shipGalPos(s), x = galTf.px(gp.x), y = galTf.py(gp.y);
-      ctx.fillStyle = '#' + s.def.color.toString(16).padStart(6, '0');
-      ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x + 4, y + 4); ctx.lineTo(x - 4, y + 4); ctx.closePath(); ctx.fill();
-      if (i === selected) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.stroke(); }
-    });
+  function activeVoyages(): number[][] { return ships.filter((s) => s.voyage).map((s) => s.voyage!.route.slice(s.voyage!.i)); }
+  function openGalaxy() {
+    if (!galaxy) return;
+    if (!galaxy3d) galaxy3d = makeGalaxy3D(renderer, nebulaTex, galaxy as any);
+    if (!hyper) hyper = makeHyperspace(renderer, nebulaTex);
+    galaxy3d.resize(innerWidth, innerHeight); hyper.resize(innerWidth, innerHeight);
+    galaxy3d.setEnabled(true); galOpen = true; controls.enabled = false; hyperShip = -1;
+    for (const L of labels) L.el.style.display = 'none'; tip.hidden = true;
+    galLabel.hidden = false; galBtn.textContent = 'Solar System'; galHover = -1; galLabelText();
+  }
+  function closeGalaxy() {
+    galOpen = false; if (galaxy3d) galaxy3d.setEnabled(false); controls.enabled = true;
+    galLabel.hidden = true; renderer.domElement.style.cursor = 'default'; galBtn.textContent = 'Galaxy Map';
+  }
+  galBtn.onclick = () => { if (hqOpen) closeHQ(); galOpen ? closeGalaxy() : openGalaxy(); };
+  // hover label text for the system under the cursor (+ route ETA for the selected ship)
+  function galLabelText() {
+    if (galHover < 0) { galLabel.textContent = 'Local Cluster — select a ship, then click a star to send it (~1 min/jump). Drag to orbit · scroll to zoom.'; return; }
+    const sy = galaxy!.systems[galHover], s = ships[selected];
+    const r = s ? routeTo(s.system, galHover) : null;
+    const eta = r && r.length > 1 ? `  ·  ${Math.round(routeEta(r))}s via ${r.length - 1} jump${r.length > 2 ? 's' : ''}` : '';
+    galLabel.textContent = `${sy.name} · ${sy.star.class}-class · ${sy.planets} planets${galHover === 0 ? ' · HOME' : ''}${eta}`;
   }
   window.addEventListener('pointermove', (e) => {
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     if (hqOpen) { if (hqCity) hqCity.setHover(hqCity.pick(ndc)); return; }   // HQ city: hover buildings
+    if (galOpen) {   // galaxy map: hover a star (route preview + label)
+      if (galaxy3d) { galHover = galaxy3d.pickStar(ndc) ?? -1; renderer.domElement.style.cursor = galHover >= 0 ? 'pointer' : 'default'; galLabelText(); }
+      return;
+    }
     tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px';
     ray.setFromCamera(ndc, camera);
     // ship rings glow on hover (ring or hull both count)
@@ -443,6 +437,8 @@ async function main() {
     camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
     if (hqCity) hqCity.resize(innerWidth, innerHeight);
+    if (galaxy3d) galaxy3d.resize(innerWidth, innerHeight);
+    if (hyper) hyper.resize(innerWidth, innerHeight);
   });
 
   // ---------- loop ----------
@@ -465,7 +461,21 @@ async function main() {
       if (!s || !s.voyage) continue; const v = s.voyage; v.t += dt;
       if (v.t >= segSeconds(v.route[v.i], v.route[v.i + 1])) { v.t = 0; v.i++; if (v.i >= v.route.length - 1) { s.system = v.route[v.route.length - 1]; s.voyage = null; onArrive(s); } }
     }
-    if (galOpen) renderGalaxy();
+    // galaxy map / hyperspace its own scene on the main canvas (hotbar stays visible)
+    if (galOpen && galaxy3d && hyper) {
+      const sel = ships[selected];
+      if (sel && sel.voyage) {   // selected ship in transit → ride the hyperspace tunnel
+        if (hyperShip !== selected) { hyper.setShip(sel.obj); hyperShip = selected; }
+        hyper.update(dt); renderer.render(hyper.scene, hyper.camera);
+      } else {
+        hyperShip = -1;
+        const routePreview = sel && !sel.voyage && galHover >= 0 ? routeTo(sel.system, galHover) : null;
+        galaxy3d.update(dt, galFleet(), galHover, routePreview, activeVoyages());
+        renderer.render(galaxy3d.scene, galaxy3d.camera);
+      }
+      hudAcc += dt; if (hudAcc > 0.15) { updateHud(); hudAcc = 0; }
+      requestAnimationFrame(frame); return;
+    }
 
     const pulse = 0.55 + 0.45 * Math.sin(T * 6);
     const destPulse = 1 + 0.28 * Math.sin(T * 3.2);   // destination ring breathes
@@ -536,7 +546,7 @@ async function main() {
   buildToolbar();
   updateHud();
   frame();
-  (window as any).__game = { ships, mineTargets, scene, camera, controls, galaxy, routeTo, departTo };
+  (window as any).__game = { ships, mineTargets, scene, camera, controls, galaxy, routeTo, departTo, openGalaxy, closeGalaxy, get galaxy3d() { return galaxy3d; }, get hyper() { return hyper; } };
   (window as any).__ready = true;
 
   // ---- helpers that need beam geometry ----

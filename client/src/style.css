@@ -111,6 +111,12 @@ canvas { display: block; }
 .fac-up:disabled { opacity: .4; cursor: not-allowed; }
 .galcanvas { width: 100%; height: auto; border-radius: 8px; border: 1px solid #1c2c44; margin-top: 6px; background: #05060c; }
 .gal-label { height: 18px; margin-top: 6px; color: #bcd2ff; font: 12px 'Segoe UI'; }
+/* hover/status readout for the 3D galaxy map (rides over the main canvas) */
+.gal-hud { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); z-index: 15;
+  max-width: 92vw; padding: 6px 14px; border-radius: 8px; pointer-events: none;
+  background: rgba(8,14,24,0.7); border: 1px solid #2f4a6a; color: #d7e6ff;
+  font: 13px 'Segoe UI'; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gal-hud[hidden] { display: none; }
 
 /* ---- HQ City 3D screen overlay UI (rides on top of the 3D scene) ---- */
 .hq-ui { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 16;

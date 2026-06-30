@@ -146,7 +146,8 @@ export function makeHQCity(renderer: THREE.WebGLRenderer, background: THREE.Text
   controls.target.set(0, 6, 0); controls.enableDamping = true; controls.dampingFactor = 0.08;
   controls.minDistance = 35; controls.maxDistance = 140;
   controls.enableRotate = false;            // fixed iso angle — no rotation
-  controls.enablePan = true; controls.screenSpacePanning = true;   // pan around the city
+  controls.enablePan = true; controls.screenSpacePanning = false;   // left-drag pans across the plane (like the solar view)
+  controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   controls.enabled = false;
 
   const ray = new THREE.Raycaster(); let hovered: string | null = null; let clock = 0;

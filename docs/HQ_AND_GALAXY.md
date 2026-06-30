@@ -46,8 +46,9 @@ deducts resources if affordable and increments the level.
 - **Interactive isometric 3D city** (`client/src/hqcity.ts`): a hex platform floating in
   space with one **distinct building per facility** (Admin Spire center; Crew Quarters,
   Research Lab, Academy, Shipyard, Trading Post, Foundry, Sensor Array on a ring), glowing
-  lanes/beacons, and the nebula skybox behind it. Its own Three.js scene + OrbitControls
-  (drag to orbit, scroll to zoom, slow auto-rotate); hovering a building highlights it.
+  lanes/beacons, and the nebula skybox behind it. Its own Three.js scene + OrbitControls at a
+  fixed isometric angle (**no rotation**); **left-drag pans across the plane and scroll zooms,
+  exactly like the solar-system view**. Hovering a building makes it **glow** (cyan emissive).
 - Click a building → an HTML panel shows its name, level, description and upgrade cost with
   an **Upgrade** button (enabled only when affordable; deducts from HQ stores). Upgrading
   **regrows the building** (taller / more floors / extra stacks).
@@ -72,15 +73,24 @@ A **local cluster of 100 procedurally generated star systems**, connected by a
 - **Cache:** output is committed to `client/public/data/galaxy.json`
   (`{ meta, systems:[{id,name,x,y,star,planets}], links:[[i,j]] }`). Edit that file
   directly to tweak the map; re-run the script to regenerate from scratch.
-- **Map view (slice):** a full-screen overlay (**Galaxy Map** HUD button) drawing the
-  cached systems as stars (colored by class), the Delaunay lanes as faint lines, the home
-  system highlighted, hover labels, and **fleet markers** for every ship.
-- **Interstellar travel (slice):** select a ship, then click a system — it routes via the
-  **shortest path** over the jump-lane graph (Dijkstra, weighted by lane length) and
-  travels at **~1 minute per segment** (`segSeconds`, lightly scaled by lane length). The
-  planned route + ETA preview on hover; active voyages animate as a dashed path with a
-  moving fleet marker. A ship in transit (or in any non-home system) is removed from the
-  local system view; arriving back home re-docks it at HQ.
+- **Map view (slice):** a full **3D scene** (`client/src/galaxymap.ts` → `makeGalaxy3D`),
+  toggled by the **Galaxy Map** HUD button (which relabels to **Solar System**). Stars sit on
+  the XZ plane as emissive spheres (colored by class, with additive halos) and **each star
+  shows its own little system of orbiting planets** (one `InstancedMesh`, per-instance colors,
+  animated each frame); the Delaunay lanes draw as faint lines and the home system gets a cyan
+  ring. The scene renders on the **main canvas with the fleet hotbar still visible** (no opaque
+  overlay). OrbitControls: drag to orbit, scroll to zoom. A hover readout names the system under
+  the cursor and shows the ETA for the selected ship.
+- **Interstellar travel (slice):** select a ship from the hotbar, then **click a star** — it
+  routes via the **shortest path** over the jump-lane graph (Dijkstra, weighted by lane length)
+  and travels at **~1 minute per segment** (`segSeconds`, lightly scaled by lane length). The
+  planned route previews on hover; active voyages draw as dashed paths and every ship shows a
+  cone fleet marker at its interpolated galaxy position. A ship in transit (or in any non-home
+  system) is removed from the local system view; arriving back home re-docks it at HQ.
+- **Hyperspace tunnel (slice):** while the **selected** ship is mid-jump, the map view swaps to
+  a hyperspace scene (`makeHyperspace`): the ship's real glTF model flies down a wormhole tube
+  (scrolling additive ring wall) with **star streaks** rushing past and an engine glow. Selecting
+  a ship that is *not* travelling returns to the cluster map.
 - **Later:** fog-of-war via the Sensor Array, per-system contents to fly into on arrival,
   fuel/range limits, multi-ship fleet orders, expansion beyond the cluster (the cache is
   the editable seed for that).
