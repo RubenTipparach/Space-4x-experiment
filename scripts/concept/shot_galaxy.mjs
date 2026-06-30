@@ -18,7 +18,10 @@ await page.waitForTimeout(2000);
 
 // open the 3D galaxy map and frame the cluster from a low angle to show orbiting planets
 await page.evaluate(() => {
-  const g = window.__game; g.openGalaxy();
+  const g = window.__game; g.openGalaxy(); g.selectShip(0);
+  // scatter a couple of ships so their find-buttons appear away from home
+  const s1 = g.ships[1], r1 = g.routeTo(s1.system, 14) || g.routeTo(s1.system, 3); if (r1) g.departTo(s1, r1);
+  g.setGalHover(14);   // hover a far star → route preview from the selected ship
 });
 await page.waitForTimeout(600);
 await page.evaluate(() => {
@@ -26,6 +29,8 @@ await page.evaluate(() => {
   m.camera.position.set(0, 380, 720); m.controls.target.set(0, 0, 0);
 });
 await page.waitForTimeout(2500);
+await page.evaluate(() => window.__game.setGalHover(14));
+await page.waitForTimeout(200);
 await page.screenshot({ path: 'assets/sprites/galaxy3d.png' });
 console.log('wrote assets/sprites/galaxy3d.png');
 

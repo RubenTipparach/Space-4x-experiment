@@ -117,6 +117,14 @@ canvas { display: block; }
   background: rgba(8,14,24,0.7); border: 1px solid #2f4a6a; color: #d7e6ff;
   font: 13px 'Segoe UI'; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gal-hud[hidden] { display: none; }
+/* floating "find" buttons over each ship on the 3D galaxy map */
+.gal-ship-btns { position: fixed; inset: 0; z-index: 13; pointer-events: none; }
+.gal-ship-btns[hidden] { display: none; }
+.gal-ship-btn { position: absolute; transform: translateX(-50%); pointer-events: auto; cursor: pointer;
+  padding: 2px 9px; border-radius: 999px; white-space: nowrap; font: 600 11px 'Segoe UI';
+  color: #d7e6ff; background: rgba(10,18,30,0.82); border: 1px solid #3a597f; }
+.gal-ship-btn:hover { border-color: #7fdcff; background: rgba(20,40,64,0.92); }
+.gal-ship-btn.sel { color: #06121e; background: #ffe24a; border-color: #ffe24a; }
 
 /* ---- HQ City 3D screen overlay UI (rides on top of the 3D scene) ---- */
 .hq-ui { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 16;

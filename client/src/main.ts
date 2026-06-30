@@ -387,6 +387,33 @@ async function main() {
   let galaxy3d: Galaxy3D | null = null, hyper: Hyperspace | null = null;
   let galOpen = false, galHover = -1, hyperShip = -1;
   const galLabel = document.createElement('div'); galLabel.className = 'gal-hud'; galLabel.hidden = true; document.body.appendChild(galLabel);
+  // per-ship "find" buttons floating over each fleet marker on the map (click → select + recenter)
+  const galShipBtns = document.createElement('div'); galShipBtns.className = 'gal-ship-btns'; galShipBtns.hidden = true; document.body.appendChild(galShipBtns);
+  let galBtnEls: HTMLButtonElement[] = [];
+  function buildGalShipBtns() {
+    galShipBtns.innerHTML = '';
+    galBtnEls = ships.map((s, i) => {
+      const b = document.createElement('button'); b.className = 'gal-ship-btn'; b.textContent = s.def.name;
+      b.onclick = (e) => { e.stopPropagation(); selectShip(i); const gp = shipGalPos(s); galaxy3d?.focusOn(gp.x, gp.y); galLabelText(); };
+      galShipBtns.appendChild(b); return b;
+    });
+  }
+  const galTmp = new THREE.Vector3();
+  function placeGalShipBtns() {
+    if (!galaxy3d) return; const bucket = new Map<string, number>();
+    ships.forEach((s, i) => {
+      const el = galBtnEls[i]; if (!el) return;
+      const gp = shipGalPos(s); galTmp.set(gp.x, 12, gp.y).project(galaxy3d!.camera);
+      if (galTmp.z >= 1) { el.style.display = 'none'; return; }   // behind the camera
+      const sx = (galTmp.x * 0.5 + 0.5) * innerWidth, sy = (-galTmp.y * 0.5 + 0.5) * innerHeight;
+      const key = Math.round(sx / 34) + '_' + Math.round(sy / 34);   // stack buttons that land on the same spot
+      const n = bucket.get(key) || 0; bucket.set(key, n + 1);
+      el.style.display = 'block';
+      el.style.left = sx + 'px';
+      el.style.top = (sy - 40 - n * 24) + 'px';
+      el.classList.toggle('sel', i === selected);
+    });
+  }
   function galFleet() {
     return ships.map((s, i) => { const gp = shipGalPos(s); return { x: gp.x, z: gp.y, color: s.def.color, sel: i === selected, visible: true }; });
   }
@@ -397,12 +424,13 @@ async function main() {
     if (!hyper) hyper = makeHyperspace(renderer, nebulaTex);
     galaxy3d.resize(innerWidth, innerHeight); hyper.resize(innerWidth, innerHeight);
     galaxy3d.setEnabled(true); galOpen = true; controls.enabled = false; hyperShip = -1;
+    if (!galBtnEls.length) buildGalShipBtns();
     for (const L of labels) L.el.style.display = 'none'; tip.hidden = true;
-    galLabel.hidden = false; galBtn.textContent = 'Solar System'; galHover = -1; galLabelText();
+    galLabel.hidden = false; galShipBtns.hidden = false; galBtn.textContent = 'Solar System'; galHover = -1; galLabelText();
   }
   function closeGalaxy() {
     galOpen = false; if (galaxy3d) galaxy3d.setEnabled(false); controls.enabled = true;
-    galLabel.hidden = true; renderer.domElement.style.cursor = 'default'; galBtn.textContent = 'Galaxy Map';
+    galLabel.hidden = true; galShipBtns.hidden = true; renderer.domElement.style.cursor = 'default'; galBtn.textContent = 'Galaxy Map';
   }
   galBtn.onclick = () => { if (hqOpen) closeHQ(); galOpen ? closeGalaxy() : openGalaxy(); };
   // hover label text for the system under the cursor (+ route ETA for the selected ship)
@@ -467,10 +495,12 @@ async function main() {
       if (sel && sel.voyage) {   // selected ship in transit → ride the hyperspace tunnel
         if (hyperShip !== selected) { hyper.setShip(sel.obj); hyperShip = selected; }
         hyper.update(dt); renderer.render(hyper.scene, hyper.camera);
+        galShipBtns.hidden = true;
       } else {
-        hyperShip = -1;
+        hyperShip = -1; galShipBtns.hidden = false;
         const routePreview = sel && !sel.voyage && galHover >= 0 ? routeTo(sel.system, galHover) : null;
         galaxy3d.update(dt, galFleet(), galHover, routePreview, activeVoyages());
+        placeGalShipBtns();
         renderer.render(galaxy3d.scene, galaxy3d.camera);
       }
       hudAcc += dt; if (hudAcc > 0.15) { updateHud(); hudAcc = 0; }
@@ -546,7 +576,7 @@ async function main() {
   buildToolbar();
   updateHud();
   frame();
-  (window as any).__game = { ships, mineTargets, scene, camera, controls, galaxy, routeTo, departTo, openGalaxy, closeGalaxy, get galaxy3d() { return galaxy3d; }, get hyper() { return hyper; } };
+  (window as any).__game = { ships, mineTargets, scene, camera, controls, galaxy, routeTo, departTo, openGalaxy, closeGalaxy, selectShip, setGalHover: (i: number) => { galHover = i; galLabelText(); }, get galaxy3d() { return galaxy3d; }, get hyper() { return hyper; } };
   (window as any).__ready = true;
 
   // ---- helpers that need beam geometry ----

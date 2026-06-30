@@ -81,11 +81,15 @@ A **local cluster of 100 procedurally generated star systems**, connected by a
   ring. The scene renders on the **main canvas with the fleet hotbar still visible** (no opaque
   overlay). OrbitControls: drag to orbit, scroll to zoom. A hover readout names the system under
   the cursor and shows the ETA for the selected ship.
+- **Finding your ships:** every ship gets a small floating **find button** over its position on
+  the map (buttons sharing a spot stack); clicking one selects that ship and recenters the camera
+  on it. The **selected** ship is also marked by a large bobbing arrow so it's obvious where it is.
 - **Interstellar travel (slice):** select a ship from the hotbar, then **click a star** — it
   routes via the **shortest path** over the jump-lane graph (Dijkstra, weighted by lane length)
-  and travels at **~1 minute per segment** (`segSeconds`, lightly scaled by lane length). The
-  planned route previews on hover; active voyages draw as dashed paths and every ship shows a
-  cone fleet marker at its interpolated galaxy position. A ship in transit (or in any non-home
+  and travels at **~1 minute per segment** (`segSeconds`, lightly scaled by lane length). On
+  hover the **planned route is drawn from the ship's current star through the jump lanes to the
+  target star** (raised above the plane so it reads clearly); active voyages draw as dashed paths
+  and every ship shows a cone fleet marker at its interpolated galaxy position. A ship in transit (or in any non-home
   system) is removed from the local system view; arriving back home re-docks it at HQ.
 - **Hyperspace tunnel (slice):** while the **selected** ship is mid-jump, the map view swaps to
   a hyperspace scene (`makeHyperspace`): the ship's real glTF model flies down a wormhole tube

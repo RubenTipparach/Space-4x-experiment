@@ -10,6 +10,7 @@ export interface Galaxy3D {
   scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls;
   update(dt: number, fleet: { x: number; z: number; color: number; sel: boolean; visible: boolean }[], hoverSys: number, routePreview: number[] | null, voyages: number[][]): void;
   pickStar(ndc: THREE.Vector2): number | null;
+  focusOn(x: number, z: number): void;
   resize(w: number, h: number): void; setEnabled(on: boolean): void;
 }
 
@@ -58,13 +59,21 @@ export function makeGalaxy3D(renderer: THREE.WebGLRenderer, background: THREE.Te
   // hover ring + route/voyage lines (rebuilt each frame)
   const hoverRing = new THREE.Mesh(new THREE.TorusGeometry(10, 0.7, 8, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
   hoverRing.rotation.x = Math.PI / 2; hoverRing.visible = false; scene.add(hoverRing);
-  const routeLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x7fdcff })); scene.add(routeLine);
-  const voyLine = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: 0x9fe8ff, dashSize: 18, gapSize: 12 })); scene.add(voyLine);
+  const ROUTE_Y = 6;   // lift the route above the lane/star plane so it reads clearly
+  const routeLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x8ff0ff })); routeLine.frustumCulled = false; scene.add(routeLine);
+  const voyLine = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: 0x9fe8ff, dashSize: 18, gapSize: 12 })); voyLine.frustumCulled = false; scene.add(voyLine);
 
   // fleet markers (cones)
   const markGeo = new THREE.ConeGeometry(5, 12, 5); const marks: THREE.Mesh[] = [];
   for (let i = 0; i < 8; i++) { const m = new THREE.Mesh(markGeo, new THREE.MeshBasicMaterial({ color: 0xffffff })); m.rotation.x = Math.PI; m.visible = false; scene.add(m); marks.push(m); }
   const markSel = new THREE.Mesh(new THREE.TorusGeometry(8, 0.6, 8, 24), new THREE.MeshBasicMaterial({ color: 0xffffff })); markSel.rotation.x = Math.PI / 2; markSel.visible = false; scene.add(markSel);
+  // big bobbing "you are here" arrow over the selected ship so it's easy to find on the map
+  const selArrow = new THREE.Group();
+  const arrowCone = new THREE.Mesh(new THREE.ConeGeometry(15, 26, 4), new THREE.MeshBasicMaterial({ color: 0xffe24a }));
+  arrowCone.rotation.x = Math.PI;   // apex points down at the ship
+  const arrowGlow = new THREE.Mesh(new THREE.ConeGeometry(22, 38, 4), new THREE.MeshBasicMaterial({ color: 0xffe24a, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
+  arrowGlow.rotation.x = Math.PI;
+  selArrow.add(arrowCone, arrowGlow); selArrow.visible = false; scene.add(selArrow);
 
   const camera = new THREE.PerspectiveCamera(35, 1, 1, 60000);
   camera.position.set(0, 1500, 1500);
@@ -82,17 +91,25 @@ export function makeGalaxy3D(renderer: THREE.WebGLRenderer, background: THREE.Te
       planets.forEach((p, k) => { const s = pos3(p.star); const a = p.ph + t * p.sp; mat4.makeTranslation(s.x + Math.cos(a) * p.r, 0, s.z + Math.sin(a) * p.r); pInst.setMatrixAt(k, mat4); });
       pInst.instanceMatrix.needsUpdate = true;
       hoverRing.visible = hoverSys >= 0; if (hoverSys >= 0) hoverRing.position.copy(pos3(hoverSys));
-      // route preview
-      if (routePreview && routePreview.length > 1) { routeLine.geometry.setFromPoints(routePreview.map(pos3)); routeLine.visible = true; } else routeLine.visible = false;
+      const selF = fleet.find((f) => f.sel && f.visible) || null;
+      // route preview: a clear line from the selected ship to the star under the cursor
+      if (routePreview && routePreview.length > 1) {
+        const pts = routePreview.map((id) => new THREE.Vector3(pos3(id).x, ROUTE_Y, pos3(id).z));
+        if (selF) pts[0] = new THREE.Vector3(selF.x, ROUTE_Y, selF.z);   // start exactly at the ship
+        routeLine.geometry.setFromPoints(pts); routeLine.geometry.computeBoundingSphere(); routeLine.visible = true;
+      } else routeLine.visible = false;
       // active voyages (dashed)
       const vp: THREE.Vector3[] = [];
-      for (const r of voyages) for (let i = 0; i + 1 < r.length; i++) { vp.push(pos3(r[i]), pos3(r[i + 1])); }
+      for (const r of voyages) for (let i = 0; i + 1 < r.length; i++) { vp.push(new THREE.Vector3(pos3(r[i]).x, ROUTE_Y, pos3(r[i]).z), new THREE.Vector3(pos3(r[i + 1]).x, ROUTE_Y, pos3(r[i + 1]).z)); }
       if (vp.length) { voyLine.geometry.setFromPoints(vp); voyLine.computeLineDistances(); voyLine.visible = true; } else voyLine.visible = false;
       // fleet markers
       fleet.forEach((f, i) => { const m = marks[i]; if (!m) return; m.visible = f.visible; if (f.visible) { m.position.set(f.x, 9, f.z); (m.material as THREE.MeshBasicMaterial).color.setHex(f.color); if (f.sel) { markSel.visible = true; markSel.position.set(f.x, 2, f.z); } } });
-      if (!fleet.some((f) => f.sel && f.visible)) markSel.visible = false;
+      if (!selF) markSel.visible = false;
+      // giant "here is your ship" arrow over the selected ship
+      if (selF) { selArrow.visible = true; selArrow.position.set(selF.x, 64 + Math.sin(t * 2.4) * 5, selF.z); } else selArrow.visible = false;
     },
     pickStar(ndc) { ray.setFromCamera(ndc, camera); const hit = ray.intersectObjects(stars, false); return hit.length ? (hit[0].object.userData as any).sysId : null; },
+    focusOn(x, z) { controls.target.set(x, 0, z); camera.position.set(x, 300, z + 380); controls.update(); },
     resize(w, h) { camera.aspect = w / h; camera.updateProjectionMatrix(); },
     setEnabled(on) { controls.enabled = on; },
   };
