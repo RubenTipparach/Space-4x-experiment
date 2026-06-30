@@ -30,7 +30,7 @@ interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(
 interface Ship {
   def: typeof FACTIONS[number]; obj: THREE.Object3D; disc: THREE.Mesh; destMarker: THREE.Mesh;
   beam: THREE.Mesh; path: THREE.Line;
-  pos: Vec; heading: number; speed: number; omega: number;
+  pos: Vec; heading: number; speed: number; omega: number; docked: boolean;
   state: 'idle' | 'moving' | 'mining' | 'returning';
   moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null;
 }
@@ -225,7 +225,7 @@ async function main() {
       new THREE.LineDashedMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.6, dashSize: 9, gapSize: 7 }));
     path.visible = false; scene.add(path);
 
-    ships[i] = { def, obj: holder, disc, destMarker, beam, path, pos: { ...start }, heading: 0, speed: 0, omega: 0, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null };
+    ships[i] = { def, obj: holder, disc, destMarker, beam, path, pos: { ...start }, heading: 0, speed: 0, omega: 0, docked: true, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null };
   }));
 
   // ---------- raycasting: select ships / move / mine ----------
@@ -247,10 +247,10 @@ async function main() {
     let mh: THREE.Object3D | null = mineHits[0]?.object ?? null;
     while (mh && !(mh.userData as any).mine) mh = mh.parent;
     const s = ships[selected];
-    if (mh && (mh.userData as any).mine && s) { s.mine = (mh.userData as any).mine; s.moveTo = null; s.state = 'moving'; flashHint(`${s.def.name} → mining ${s.mine!.name}`); return; }
-    // 3) empty space → move on the plane
+    if (mh && (mh.userData as any).mine && s) { s.mine = (mh.userData as any).mine; s.moveTo = null; s.state = 'moving'; s.docked = false; flashHint(`${s.def.name} → mining ${s.mine!.name}`); return; }
+    // 3) empty space → undock (if docked) and move on the plane
     const hit = new THREE.Vector3();
-    if (s && ray.ray.intersectPlane(ground, hit)) { s.moveTo = { x: hit.x, z: hit.z }; s.mine = null; s.state = 'moving'; flashHint(`${s.def.name} → moving`); }
+    if (s && ray.ray.intersectPlane(ground, hit)) { const wasDocked = s.docked; s.moveTo = { x: hit.x, z: hit.z }; s.mine = null; s.state = 'moving'; s.docked = false; flashHint(`${s.def.name} → ${wasDocked ? 'undocking, ' : ''}moving`); }
   });
 
   // ---------- HUD ----------
@@ -269,7 +269,7 @@ async function main() {
     fleetEl.innerHTML = '';
     ships.forEach((s, i) => {
       const b = document.createElement('div'); b.className = 'ship-btn' + (i === selected ? ' selected' : '');
-      b.innerHTML = `<img src="${BASE}sprites/${s.def.id}_y000.png" alt=""><div class="s-name">${s.def.name}</div><div class="s-stat" data-i="${i}">idle</div>`;
+      b.innerHTML = `<div class="hq-badge" data-b="${i}" title="docked at HQ">HQ</div><img src="${BASE}sprites/${s.def.id}_y000.png" alt=""><div class="s-name">${s.def.name}</div><div class="s-stat" data-i="${i}">idle</div>`;
       b.onclick = () => selectShip(i); fleetEl.appendChild(b);
     });
   }
@@ -279,9 +279,90 @@ async function main() {
       el.className = 's-stat ' + (s.state === 'mining' ? 'mining' : s.state === 'returning' ? 'returning' : s.state === 'moving' ? 'moving' : '');
       el.textContent = s.state === 'mining' ? `mining ${Math.round(s.cargo)}%` : s.state;
     });
+    [...fleetEl.querySelectorAll('.hq-badge')].forEach((el) => {
+      const i = +(el as HTMLElement).dataset.b!; const s = ships[i];
+      (el as HTMLElement).style.display = s && s.docked ? 'block' : 'none';
+    });
     resEl.innerHTML = `<h3>HQ Stores</h3>` + (Object.keys(resources) as ResourceTag[])
       .map((k) => `<div class="res-row"><span class="k">${RESOURCE_LABEL[k]}</span><span class="v">${Math.floor(resources[k])}</span></div>`).join('');
     recallBtn.disabled = !ships[selected];
+  }
+
+  // ---------- HQ city + galaxy map screens ----------
+  const navBar = document.createElement('div'); navBar.className = 'navbar'; document.body.appendChild(navBar);
+  const hqBtn = document.createElement('button'); hqBtn.className = 'nav-btn'; hqBtn.textContent = 'HQ City';
+  const galBtn = document.createElement('button'); galBtn.className = 'nav-btn'; galBtn.textContent = 'Galaxy Map';
+  navBar.append(hqBtn, galBtn);
+
+  const FACILITIES = [
+    { key: 'admin', name: 'Admin Spire', desc: 'Command hub — raises fleet & build capacity.', base: { ore: 40, crystal: 20 } as Partial<Record<ResourceTag, number>> },
+    { key: 'crew', name: 'Crew Quarters', desc: 'Houses crew for your ships.', base: { ore: 30, plants: 15 } },
+    { key: 'lab', name: 'Research Lab', desc: 'Unlocks and speeds up research.', base: { crystal: 35, minerals: 15 } },
+    { key: 'academy', name: 'Academy', desc: 'Trains officers and pilots.', base: { crystal: 25, plants: 20 } },
+    { key: 'shipyard', name: 'Shipyard', desc: 'Builds and refits ships.', base: { ore: 60, crystal: 30 } },
+    { key: 'trade', name: 'Trading Post', desc: 'Markets, prices and contracts.', base: { gas: 25, minerals: 20 } },
+    { key: 'foundry', name: 'Foundry', desc: 'Refines ore into alloys.', base: { ore: 50, gas: 20 } },
+    { key: 'sensors', name: 'Sensor Array', desc: 'Reveals systems & detects fleets.', base: { crystal: 30, gas: 25 } },
+  ];
+  const facLevel: Record<string, number> = {}; FACILITIES.forEach((f) => (facLevel[f.key] = 1));
+  const costOf = (f: typeof FACILITIES[number], lvl: number) =>
+    Object.entries(f.base).map(([k, v]) => [k as ResourceTag, Math.round((v as number) * Math.pow(1.6, lvl - 1))] as const);
+
+  const hqOverlay = document.createElement('div'); hqOverlay.className = 'overlay'; hqOverlay.hidden = true; document.body.appendChild(hqOverlay);
+  function renderHQ() {
+    const cards = FACILITIES.map((f) => {
+      const lvl = facLevel[f.key]; const cost = costOf(f, lvl);
+      const afford = cost.every(([k, v]) => resources[k] >= v);
+      const costStr = cost.map(([k, v]) => `${RESOURCE_LABEL[k]} ${v}`).join(' · ');
+      return `<div class="fac-card"><div class="fac-top"><span class="fac-name">${f.name}</span><span class="fac-lvl">Lv ${lvl}</span></div>
+        <div class="fac-desc">${f.desc}</div><div class="fac-cost">${costStr}</div>
+        <button class="fac-up" data-k="${f.key}" ${afford ? '' : 'disabled'}>Upgrade</button></div>`;
+    }).join('');
+    hqOverlay.innerHTML = `<div class="ov-panel"><div class="ov-head"><h2>Headquarters — Thallian Reach</h2><button class="ov-close">✕</button></div>
+      <div class="ov-sub">Space city · spend HQ stores to upgrade facilities</div><div class="fac-grid">${cards}</div></div>`;
+    hqOverlay.querySelector('.ov-close')!.addEventListener('click', () => { hqOverlay.hidden = true; });
+    hqOverlay.querySelectorAll<HTMLButtonElement>('.fac-up').forEach((btn) => btn.addEventListener('click', () => {
+      const f = FACILITIES.find((x) => x.key === btn.dataset.k)!; const cost = costOf(f, facLevel[f.key]);
+      if (cost.every(([k, v]) => resources[k] >= v)) { cost.forEach(([k, v]) => (resources[k] -= v)); facLevel[f.key]++; renderHQ(); updateHud(); }
+    }));
+  }
+  hqBtn.onclick = () => { hqOverlay.hidden = false; renderHQ(); };
+
+  const galOverlay = document.createElement('div'); galOverlay.className = 'overlay'; galOverlay.hidden = true; document.body.appendChild(galOverlay);
+  let galaxy: { systems: any[]; links: number[][]; meta: any } | null = null;
+  galBtn.onclick = async () => {
+    galOverlay.hidden = false;
+    if (!galaxy) galaxy = await fetch(`${BASE}data/galaxy.json`).then((r) => r.json());
+    galOverlay.innerHTML = `<div class="ov-panel ov-wide"><div class="ov-head"><h2>Local Cluster — ${galaxy!.systems.length} systems</h2><button class="ov-close">✕</button></div>
+      <div class="ov-sub">Delaunay jump lanes · home system highlighted · hover a star</div>
+      <canvas class="galcanvas" width="980" height="600"></canvas><div class="gal-label"></div></div>`;
+    galOverlay.querySelector('.ov-close')!.addEventListener('click', () => { galOverlay.hidden = true; });
+    drawGalaxy(galOverlay.querySelector('.galcanvas')!, galOverlay.querySelector('.gal-label')!);
+  };
+  function drawGalaxy(cv: HTMLCanvasElement, label: HTMLElement) {
+    const ctx = cv.getContext('2d')!; const W = cv.width, H = cv.height; const g = galaxy!;
+    const R = g.meta.radius * 1.08; const sx = (W / 2) / R, sy = (H / 2) / R, sc = Math.min(sx, sy);
+    const px = (x: number) => W / 2 + x * sc, py = (y: number) => H / 2 + y * sc;
+    const screen = g.systems.map((s) => ({ x: px(s.x), y: py(s.y) }));
+    const render = (hi = -1) => {
+      ctx.fillStyle = '#05060c'; ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = 'rgba(110,150,210,0.18)'; ctx.lineWidth = 1; ctx.beginPath();
+      for (const [a, b] of g.links) { ctx.moveTo(screen[a].x, screen[a].y); ctx.lineTo(screen[b].x, screen[b].y); } ctx.stroke();
+      g.systems.forEach((s, i) => {
+        const r = i === 0 ? 5 : 2.6 + (s.planets > 9 ? 1.4 : 0);
+        ctx.beginPath(); ctx.fillStyle = '#' + (s.star.color as number).toString(16).padStart(6, '0');
+        ctx.arc(screen[i].x, screen[i].y, i === hi ? r + 2 : r, 0, 7); ctx.fill();
+        if (i === 0) { ctx.strokeStyle = '#7fdcff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(screen[i].x, screen[i].y, 9, 0, 7); ctx.stroke(); }
+      });
+    };
+    render();
+    cv.onmousemove = (e) => {
+      const rect = cv.getBoundingClientRect(); const mx = (e.clientX - rect.left) * (W / rect.width), my = (e.clientY - rect.top) * (H / rect.height);
+      let best = -1, bd = 144; screen.forEach((p, i) => { const d = (p.x - mx) ** 2 + (p.y - my) ** 2; if (d < bd) { bd = d; best = i; } });
+      render(best);
+      if (best >= 0) { const s = g.systems[best]; label.textContent = `${s.name}  ·  ${s.star.class}-class  ·  ${s.planets} planets${best === 0 ? '  ·  HOME' : ''}`; }
+      else label.textContent = '';
+    };
   }
   window.addEventListener('pointermove', (e) => {
     tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px';
@@ -335,7 +416,7 @@ async function main() {
         const arrived = steer(s, dest, arriveR, dt);   // thrust + turn with bounded accel
         if (arrived) {
           if (s.state === 'moving') s.state = s.mine ? 'mining' : 'idle';
-          else if (s.state === 'returning') { if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; } s.state = 'idle'; s.moveTo = null; }
+          else if (s.state === 'returning') { if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; } s.state = 'idle'; s.moveTo = null; s.docked = true; }
         }
       } else {
         coast(s, dt);   // idle: ease thrust + turn to zero and glide to a stop
