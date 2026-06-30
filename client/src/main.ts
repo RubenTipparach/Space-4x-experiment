@@ -178,7 +178,7 @@ async function main() {
 
   // ---------- fleet (glTF ships) ----------
   const loader = new GLTFLoader();
-  const discGeo = new THREE.CircleGeometry(17, 44);          // faint flat disc under each ship (hover/select target)
+  const discGeo = new THREE.RingGeometry(14.5, 17.5, 44);     // faint flat ring under each ship (hover/select target)
   const destGeo = new THREE.RingGeometry(9, 12, 44);          // pulsing destination marker
   const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
   await Promise.all(FACTIONS.map(async (def, i) => {
@@ -239,9 +239,9 @@ async function main() {
     if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6) return;   // was a camera drag
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, camera);
-    // 1) ship? select via its disc (big flat target = easy to click)
-    const discHits = ray.intersectObjects(ships.map((s) => s.disc), false);
-    if (discHits.length) { selectShip((discHits[0].object.userData as any).shipIndex); return; }
+    // 1) ship? select via its ring or hull (whole footprint is clickable)
+    const discHits = ray.intersectObjects(ships.flatMap((s) => [s.disc, s.obj]), true);
+    if (discHits.length) { let o: THREE.Object3D | null = discHits[0].object; while (o && (o.userData as any).shipIndex === undefined) o = o.parent; if (o) { selectShip((o.userData as any).shipIndex); return; } }
     // 2) mine target?
     const mineHits = ray.intersectObjects(mineTargets.length ? hoverMeshes.map((h) => h.mesh) : [], true);
     let mh: THREE.Object3D | null = mineHits[0]?.object ?? null;
@@ -287,9 +287,11 @@ async function main() {
     tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 14 + 'px';
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, camera);
-    // ship discs glow on hover (and are the click target)
-    const discHits = ray.intersectObjects(ships.filter(Boolean).map((s) => s.disc), false);
-    hovered = discHits.length ? (discHits[0].object.userData as any).shipIndex : -1;
+    // ship rings glow on hover (ring or hull both count)
+    const discHits = ray.intersectObjects(ships.filter(Boolean).flatMap((s) => [s.disc, s.obj]), true);
+    let ho: THREE.Object3D | null = discHits[0]?.object ?? null;
+    while (ho && (ho.userData as any).shipIndex === undefined) ho = ho.parent;
+    hovered = ho ? (ho.userData as any).shipIndex : -1;
     renderer.domElement.style.cursor = hovered >= 0 ? 'pointer' : 'default';
     const hits = ray.intersectObjects(hoverMeshes.map((h) => h.mesh), true);
     if (hits.length) { let o: THREE.Object3D | null = hits[0].object; const found = hoverMeshes.find((h) => { let x: THREE.Object3D | null = o; while (x) { if (x === h.mesh) return true; x = x.parent; } return false; }); if (found) { tip.innerHTML = found.html; tip.hidden = false; return; } }
@@ -444,16 +446,30 @@ function updatePath(s: Ship, T: Vec | null, arriveR: number) {
   s.path.computeLineDistances(); s.path.visible = true;
 }
 
-// One clean, evenly-spaced polar reference grid (concentric rings + spokes) for the plane.
+// Polar reference grid (rings + radial spokes) that dips into a gravity well near the
+// star — a rubber-sheet funnel localized to the sun; flat out where the planets orbit.
 function addPolarGrid(scene: THREE.Scene, maxR: number) {
-  const STEP = 260, SPOKES = 16; const pts: number[] = [];
-  for (let r = STEP; r <= maxR; r += STEP) {
-    let px = r, pz = 0;
-    for (let i = 1; i <= 128; i++) { const a = (i / 128) * Math.PI * 2; const x = Math.cos(a) * r, z = Math.sin(a) * r; pts.push(px, 0, pz, x, 0, z); px = x; pz = z; }
+  const WELL_DEPTH = 300, WELL_FALLOFF = 135;
+  const wellY = (r: number) => -WELL_DEPTH / (1 + (r / WELL_FALLOFF) * (r / WELL_FALLOFF));
+  const SPOKES = 20; const pts: number[] = [];
+  // ring radii: dense near the sun (to shape the funnel), regular farther out
+  const radii: number[] = [];
+  for (let r = 30; r < 320; r += 38) radii.push(r);
+  for (let r = 320; r <= maxR; r += 260) radii.push(r);
+  for (const r of radii) {
+    const y = wellY(r); let px = r, pz = 0;
+    for (let i = 1; i <= 128; i++) { const a = (i / 128) * Math.PI * 2; const x = Math.cos(a) * r, z = Math.sin(a) * r; pts.push(px, y, pz, x, y, z); px = x; pz = z; }
   }
-  for (let s = 0; s < SPOKES; s++) { const a = (s / SPOKES) * Math.PI * 2; pts.push(0, 0, 0, Math.cos(a) * maxR, 0, Math.sin(a) * maxR); }
+  // radial spokes: tessellated and curved down into the well near the center
+  for (let s = 0; s < SPOKES; s++) {
+    const a = (s / SPOKES) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+    let pr = 0, py = wellY(0);
+    for (let r = 12; r <= maxR; r += (r < 320 ? 14 : 80)) {
+      const y = wellY(r); pts.push(ca * pr, py, sa * pr, ca * r, y, sa * r); pr = r; py = y;
+    }
+  }
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x2a3f5c, transparent: true, opacity: 0.18 })));
+  scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x2a3f5c, transparent: true, opacity: 0.2 })));
 }
 
 function addRings(g: THREE.Group, size: number, color: number) {
