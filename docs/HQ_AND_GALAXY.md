@@ -72,9 +72,15 @@ A **local cluster of 100 procedurally generated star systems**, connected by a
 - **Cache:** output is committed to `client/public/data/galaxy.json`
   (`{ meta, systems:[{id,name,x,y,star,planets}], links:[[i,j]] }`). Edit that file
   directly to tweak the map; re-run the script to regenerate from scratch.
-- **Map view (slice):** a full-screen overlay (**Galaxy** HUD button) that draws the
-  cached systems as stars (colored by class) with the Delaunay lanes as faint lines,
-  the home system highlighted, and hover labels. Pan/zoom.
-- **Later:** travel between systems (minutes of flight per GAME_DESIGN), fog-of-war via
-  Sensor Array, per-system contents, fleet positions on the map, expansion beyond the
-  cluster (the cache is the editable seed for that).
+- **Map view (slice):** a full-screen overlay (**Galaxy Map** HUD button) drawing the
+  cached systems as stars (colored by class), the Delaunay lanes as faint lines, the home
+  system highlighted, hover labels, and **fleet markers** for every ship.
+- **Interstellar travel (slice):** select a ship, then click a system — it routes via the
+  **shortest path** over the jump-lane graph (Dijkstra, weighted by lane length) and
+  travels at **~1 minute per segment** (`segSeconds`, lightly scaled by lane length). The
+  planned route + ETA preview on hover; active voyages animate as a dashed path with a
+  moving fleet marker. A ship in transit (or in any non-home system) is removed from the
+  local system view; arriving back home re-docks it at HQ.
+- **Later:** fog-of-war via the Sensor Array, per-system contents to fly into on arrival,
+  fuel/range limits, multi-ship fleet orders, expansion beyond the cluster (the cache is
+  the editable seed for that).
