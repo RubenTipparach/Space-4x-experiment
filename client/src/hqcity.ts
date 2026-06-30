@@ -117,9 +117,23 @@ export function makeHQCity(renderer: THREE.WebGLRenderer, background: THREE.Text
   facilities.forEach(placeOne);
 
   // lighting: a warm key + cool fill so the city reads as a lit place
-  const key = new THREE.DirectionalLight(0xfff0d8, 2.2); key.position.set(40, 60, 25); scene.add(key);
-  scene.add(new THREE.DirectionalLight(0x6a86c0, 0.5).translateX(-40).translateZ(-30));
-  scene.add(new THREE.HemisphereLight(0x9fb8ff, 0x101622, 0.5));
+  const key = new THREE.DirectionalLight(0xfff0d8, 1.6); key.position.set(40, 60, 25); scene.add(key);
+  scene.add(new THREE.DirectionalLight(0x6a86c0, 0.35).translateX(-40).translateZ(-30));
+  scene.add(new THREE.HemisphereLight(0x8aa0d0, 0x0c1018, 0.35));
+
+  // colored accent point-lights for a moody neon "city at night" vibe (they pool color
+  // on nearby buildings and the deck) — gently pulsing.
+  const accents: THREE.PointLight[] = [];
+  const accent = (color: number, x: number, y: number, z: number, intensity: number, dist: number) => {
+    const l = new THREE.PointLight(color, intensity, dist, 2); l.position.set(x, y, z);
+    (l.userData as any).base = intensity; scene.add(l); accents.push(l);
+  };
+  accent(0x3fb6ff, 0, 12, 0, 2600, 110);     // cyan glow over the central spire
+  accent(0xff4fa0, 19, 6, 14, 1500, 75);     // magenta
+  accent(0x37e6c0, -19, 6, 16, 1500, 75);    // teal
+  accent(0xff8a3a, 19, 7, -16, 1700, 75);    // warm by the foundry
+  accent(0x7a6cff, -20, 6, -15, 1400, 75);   // violet
+  accent(0x39b6ff, 0, 3, 26, 1200, 70);      // cyan rim accent
 
   const camera = new THREE.PerspectiveCamera(30, 1, 1, 5000);
   camera.position.set(46, 40, 46);
@@ -128,7 +142,7 @@ export function makeHQCity(renderer: THREE.WebGLRenderer, background: THREE.Text
   controls.minDistance = 35; controls.maxDistance = 140; controls.maxPolarAngle = Math.PI * 0.46;
   controls.autoRotate = true; controls.autoRotateSpeed = 0.35; controls.enablePan = false; controls.enabled = false;
 
-  const ray = new THREE.Raycaster(); let hovered: string | null = null;
+  const ray = new THREE.Raycaster(); let hovered: string | null = null; let clock = 0;
   const setEmissive = (key: string, mul: number) => {
     const g = groups.get(key); if (!g) return;
     g.traverse((o: any) => { if (o.isMesh && o.material && o.material.emissive) { o.userData.baseEI ??= o.material.emissiveIntensity; o.material = o.material; o.material.emissiveIntensity = o.userData.baseEI * mul; } });
@@ -136,7 +150,7 @@ export function makeHQCity(renderer: THREE.WebGLRenderer, background: THREE.Text
 
   return {
     scene, camera, controls,
-    update() { controls.update(); },
+    update(dt) { clock += dt; controls.update(); accents.forEach((l, i) => { l.intensity = (l.userData as any).base * (0.82 + 0.18 * Math.sin(clock * 1.6 + i * 1.3)); }); },
     resize(w, h) { camera.aspect = w / h; camera.updateProjectionMatrix(); },
     pick(ndc) {
       ray.setFromCamera(ndc, camera);
