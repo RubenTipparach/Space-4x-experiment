@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Clean, deliberately-modeled faction ships (no random greeble) in Blender/Cycles.
 
-Style-target pass: intentional, symmetric silhouettes built from clean primitives
-with bevels + PBR materials, rendered top-down 3/4 with path tracing.
+v3 "hero feature" pass: every faction is built around one unmistakable structural
+idea (hammerhead prow, crescent wings, truss hauler, catamaran, twin-boom attacker,
+cathedral halo rings, isopod carapace, folded raptor wings) with layered massing,
+plate bands and repeated engineering detail — not one loft with sticks.
 
 Run: python3 scripts/concept/blender_clean.py [faction_id ...]
 Out: assets/sprites/clean/<faction>.png
@@ -85,13 +87,9 @@ def prism(sides, r, depth, loc, rot, mat, smooth=False, bevel=0.03):
     return finish(bpy.context.active_object, mat, smooth, bevel)
 
 
-def cone(r1, depth, loc, rot, mat, smooth=True, bevel=0.0, verts=32):
-    bpy.ops.mesh.primitive_cone_add(vertices=verts, radius1=r1, radius2=0, depth=depth, location=loc, rotation=rot)
+def cone(r1, depth, loc, rot, mat, smooth=True, bevel=0.0, verts=32, r2=0.0):
+    bpy.ops.mesh.primitive_cone_add(vertices=verts, radius1=r1, radius2=r2, depth=depth, location=loc, rotation=rot)
     return finish(bpy.context.active_object, mat, smooth, bevel)
-
-
-def nose_cone(r, length, y, mat, verts=32):  # sharp nose pointing +Y
-    return cone(r, length, (0, y, 0), (math.radians(-90), 0, 0), mat, verts=verts)
 
 
 def offside(obj, gap=0.06):
@@ -175,41 +173,103 @@ def loft_hull(shape, stations, mat, bevel=0.04, smooth=False, name="hull"):
     return loft_axis(shape, st, mat, "Y", bevel, smooth, name)
 
 
+def st_at(sts, y):
+    """Interpolate a (y, w, h, dz) hull station list (y descending) at a given y."""
+    if y >= sts[0][0]: return sts[0]
+    for a, b in zip(sts, sts[1:]):
+        if a[0] >= y >= b[0]:
+            t = (a[0] - y) / max(a[0] - b[0], 1e-6)
+            return tuple(pa + (pb - pa) * t for pa, pb in zip(a, b))
+    return sts[-1]
+
+
+def plate_band(shape, sts, y0, y1, grow, mat, bevel=0.05):
+    """An armor/carapace band: re-loft the hull's own cross-section over [y0, y1]
+    (y0 > y1) scaled up slightly, so it wraps the body as a raised plate. Layer a few
+    with overlaps for segmented shells; use sparingly for panel breaks on hulls."""
+    seg = [st_at(sts, y0)] + [s for s in sts if y0 > s[0] > y1] + [st_at(sts, y1)]
+    st = [(y, w * grow + 0.012, h * grow + 0.012, dz) for (y, w, h, dz) in seg]
+    return loft_hull(shape, st, mat, bevel=bevel)
+
+
 # airfoil-ish hexagon: sharp leading/trailing edge, thickest ~1/3 back
 XS_FOIL = [(0.5, 0.0), (0.12, 0.5), (-0.38, 0.3), (-0.5, 0.0), (-0.38, -0.3), (0.12, -0.5)]
 
 
-def wing_pair(loc, span, root, tip, thick, sweep, dihedral, mat, bevel=0.04):
-    """Mirrored REAL wings: tapered, swept, lofted along X (not scaled boxes).
-    loc = root center; span per side; root/tip = chord; sweep = how far back the tip
-    sits; dihedral = tip rise. Sharp leading/trailing edges from XS_FOIL."""
+def wing_pair(loc, span, root, tip, thick, sweep, dihedral, mat, bevel=0.04, curve=1.0, foil=XS_FOIL):
+    """Mirrored REAL wings: tapered, swept, lofted along X from an airfoil section.
+    loc = root center; span per side; root/tip = chord; sweep = tip set-back (negative
+    = forward-swept); dihedral = tip rise (negative = folded/anhedral). curve > 1 bends
+    the sweep into a crescent instead of a straight taper."""
     x0, y0, z0 = loc
+    fs = (0.0, 0.3, 0.55, 0.78, 1.0)
     def one(sx):
-        st = [(sx * (x0 + span * f), root + (tip - root) * f, thick * (1 - 0.5 * f),
-               y0 - sweep * f, z0 + dihedral * f) for f in (0.0, 0.45, 0.8, 1.0)]
-        return loft_axis(XS_FOIL, st, mat, "X", bevel, False, "wing")
+        st = [(sx * (x0 + span * f), root + (tip - root) * f, max(thick * (1 - 0.5 * f), 0.02),
+               y0 - sweep * (f ** curve), z0 + dihedral * (f ** 1.15)) for f in fs]
+        return loft_axis(foil, st, mat, "X", bevel, False, "wing")
     return pair(one)
 
 
 def fin(loc, height, root, tip, thick, sweep, mat, bevel=0.03):
     """A vertical stabilizer / spire lofted along Z (negative height = ventral)."""
     x0, y0, z0 = loc
-    st = [(z0 + height * f, root + (tip - root) * f, thick * (1 - 0.45 * f),
+    st = [(z0 + height * f, root + (tip - root) * f, max(thick * (1 - 0.45 * f), 0.02),
            y0 - sweep * f, x0) for f in (0.0, 0.5, 1.0)]
     return loft_axis(XS_FOIL, st, mat, "Z", bevel, False, "fin")
 
 
-def engine_block(loc, n, r, housing, glow, spread=None, depth=0.5):
-    """A believable stern: n round thruster housings in a row along X, each with a
-    recessed glow disc (the rim shadows it, so the glow reads as a nozzle)."""
+def nozzle(loc, r, mat, glow, length=0.5):
+    """A proper engine bell: housing cylinder + flared truncated-cone bell + a glow
+    disc recessed inside the bell mouth (faces aft, -Y)."""
+    out = [cyl(r * 0.82, length * 0.55, (loc[0], loc[1] + length * 0.32, loc[2]),
+               (math.radians(90), 0, 0), mat, smooth=True, bevel=0.02)]
+    out.append(cone(r, length * 0.6, (loc[0], loc[1] - length * 0.05, loc[2]),
+                    (math.radians(90), 0, 0), mat, smooth=True, bevel=0.012, r2=r * 0.6))
+    out.append(disc(r * 0.66, 0.05, (loc[0], loc[1] - length * 0.22, loc[2]), glow))
+    return out
+
+
+def truss(y0, y1, hw, hh, mat, bays=4, t=0.028):
+    """An exposed lattice spine: 4 longerons + X-braces per bay on top and bottom and
+    mirrored side diagonals. Reads instantly as heavy engineering."""
     out = []
-    spread = spread if spread is not None else r * 2.5
-    for i in range(n):
-        dx = (i - (n - 1) / 2) * spread
-        p = (loc[0] + dx, loc[1], loc[2])
-        out.append(cyl(r * 1.16, depth, (p[0], p[1] + depth * 0.5, p[2]),
-                       (math.radians(90), 0, 0), housing, smooth=True, bevel=0.03))
-        out.append(disc(r * 0.8, 0.06, (p[0], p[1] + 0.1, p[2]), glow))
+    mid, half = (y0 + y1) / 2, abs(y0 - y1) / 2
+    for sx, sz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):   # longerons
+        out.append(box((t, half, t), (sx * hw, mid, sz * hh), (0, 0, 0), mat, bevel=0.008))
+    step = (y1 - y0) / bays
+    dlen = math.hypot(step, 2 * hw) / 2
+    ang = math.atan2(2 * hw, abs(step))
+    for k in range(bays):
+        yc = y0 + step * (k + 0.5)
+        for rot in (ang, -ang):   # X-cross on top & bottom faces (symmetric)
+            out.append(box((dlen, t, t), (0, yc, hh), (0, 0, rot), mat, bevel=0.008))
+            out.append(box((dlen, t, t), (0, yc, -hh), (0, 0, rot), mat, bevel=0.008))
+        slen = math.hypot(step, 2 * hh) / 2
+        sang = math.atan2(2 * hh, abs(step)) * (1 if k % 2 == 0 else -1)
+        out += pair(lambda sx, yc=yc, sang=sang: box((t, slen, t), (sx * hw, yc, 0),
+                                                     (sang, 0, 0), mat, bevel=0.008))
+    return out
+
+
+def turret(loc, mat, gun, r=0.10, barrels=2, length=0.5):
+    """A gun turret: ring base + housing + forward barrels (mirrored about the mount)."""
+    out = [cyl(r, 0.07, loc, (0, 0, 0), mat, smooth=True, bevel=0.02),
+           box((r * 0.8, r * 0.95, r * 0.55), (loc[0], loc[1], loc[2] + r * 0.6), (0, 0, 0), mat, bevel=0.025)]
+    offs = [0.0] if barrels == 1 else [-r * 0.42, r * 0.42]
+    for dx in offs:
+        out.append(cyl(0.018, length, (loc[0] + dx, loc[1] + length / 2 + r * 0.7, loc[2] + r * 0.6),
+                       (math.radians(90), 0, 0), gun, smooth=True, bevel=0))
+    return out
+
+
+def missile_rack(loc, rows, cols, mat, r=0.026):
+    """An underwing rack of missile tubes (repetition = military engineering)."""
+    out = [box((cols * r * 1.5, 0.20, rows * r * 1.5), loc, (0, 0, 0), mat, bevel=0.02)]
+    for i in range(rows):
+        for j in range(cols):
+            dx = (j - (cols - 1) / 2) * r * 2.7; dz = (i - (rows - 1) / 2) * r * 2.7
+            out.append(cyl(r, 0.38, (loc[0] + dx, loc[1] - 0.06, loc[2] + dz),
+                           (math.radians(90), 0, 0), mat, smooth=True, bevel=0))
     return out
 
 
@@ -243,279 +303,315 @@ def antenna(loc, h, mat, r=0.014):
 
 # cross-section unit shapes (x = right, z = up); kept symmetric about x = 0
 def xs_keel(top=1.0, bottom=-0.55, shoulder=0.25, w=1.0):
-    # peaked top, angled sides, narrow keel -> arrow/house front profile
     return [(0, top), (w, shoulder), (0.62 * w, bottom), (-0.62 * w, bottom), (-w, shoulder)]
 
 def xs_lens(w=1.0, h=0.6):
-    # flattened hexagon -> lens/blade front profile
     return [(0, h), (w, 0.2 * h), (0.7 * w, -h), (-0.7 * w, -h), (-w, 0.2 * h)]
 
 def xs_diamond():
     return [(0, 1.0), (1.0, 0.0), (0, -0.7), (-1.0, 0.0)]
 
-def xs_slab(w=1.0, h=0.55):  # wide flat-top trapezoid -> industrial hull
+def xs_slab(w=1.0, h=0.55):
     return [(-0.82 * w, h), (0.82 * w, h), (w, -0.15), (0.6 * w, -h), (-0.6 * w, -h), (-w, -0.15)]
 
-def xs_round(w=1.0, h=1.0):  # octagon -> bulbous/organic body
+def xs_round(w=1.0, h=1.0):
     return [(0, h), (0.7 * w, 0.7 * h), (w, 0), (0.7 * w, -0.7 * h),
             (0, -h), (-0.7 * w, -0.7 * h), (-w, 0), (-0.7 * w, 0.7 * h)]
 
-def xs_tall(w=0.55, h=1.1):  # tall narrow peak -> menacing vertical body
+def xs_tall(w=0.55, h=1.1):
     return [(0, h), (w, 0.2 * h), (0.5 * w, -h), (-0.5 * w, -h), (-w, 0.2 * h)]
 
 
 # ---------------- builders (forward = +Y, up = +Z) ----------------
 def consortium():
-    """Meridian (Order): elegant layered cruiser — stepped decks, gold trim spine,
-    swept pylons carrying flat blade nacelles, lit windows. Clean capital-ship look."""
-    white = pmat("white", (0.84, 0.87, 0.92), 0.55, 0.34)
-    panel = pmat("panel", (0.55, 0.60, 0.68), 0.6, 0.45)
+    """Meridian (Order) — HAMMERHEAD battlecruiser: bladed crossbar prow with sensor
+    pods, a slim turreted waist spine, and a broad three-bell stern block. White/gold."""
+    white = pmat("white", (0.82, 0.85, 0.90), 0.5, 0.38)
+    panel = pmat("panel", (0.42, 0.47, 0.56), 0.6, 0.5)
+    steel = pmat("steel", (0.30, 0.33, 0.40), 0.75, 0.45)
     gold = pmat("gold", (0.83, 0.63, 0.22), 0.95, 0.25)
     blue = emat("blue", (0.30, 0.72, 1.0), 12)
     win = emat("win", (0.78, 0.90, 1.0), 5)
-    copper = emat("copper", (1.0, 0.6, 0.3), 6)
     o = []
-    # main hull: long sleek keel with smooth curvature
-    ctrl = [(2.3, 0.05, 0.05, 0.0), (1.6, 0.36, 0.30, 0.03), (0.7, 0.66, 0.50, 0.05),
-            (-0.2, 0.74, 0.48, 0.02), (-1.2, 0.52, 0.36, -0.02), (-2.0, 0.20, 0.18, -0.03)]
-    o += [loft_hull(xs_keel(1.0, -0.5, 0.18, 1.0), smooth_stations(ctrl, 4), white, bevel=0.05)]
-    # stepped upper deck (second loft -> layered side profile)
-    deck = [(1.15, 0.26, 0.14, 0.34), (0.45, 0.44, 0.20, 0.40), (-0.55, 0.40, 0.18, 0.36), (-1.35, 0.20, 0.10, 0.26)]
-    o += [loft_hull(xs_slab(0.9, 0.8), smooth_stations(deck, 3), panel, bevel=0.04)]
-    # bridge + glowing viewport
-    o += [box((0.15, 0.26, 0.09), (0, 0.62, 0.60), (0, 0, 0), white, bevel=0.04)]
-    o += [box((0.10, 0.05, 0.032), (0, 0.80, 0.61), (0, 0, 0), blue, bevel=0)]
-    # gold spine + mirrored nose chevrons (structure, not paint: raised trim ridges)
-    o += [box((0.045, 1.35, 0.04), (0, -0.35, 0.52), (0, 0, 0), gold, bevel=0.012)]
-    o += pair(lambda sx: box((0.26, 0.055, 0.04), (sx * 0.24, 1.42, 0.17), (0, 0, sx * 0.55), gold, bevel=0.012))
-    # flank windows
-    o += window_strip(0.9, -1.0, 0.60, 0.16, win, n=9)
-    # swept pylons (real lofted wings) carrying FLAT blade nacelles
-    o += wing_pair((0.45, -0.55, 0.10), 0.62, 0.55, 0.30, 0.10, 0.35, 0.10, white)
-    o += pair(lambda sx: [
-        box((0.16, 1.25, 0.10), (sx * 1.12, -0.85, 0.22), (0, 0, sx * 0.04), white, bevel=0.045),   # blade nacelle
-        box((0.10, 0.05, 0.05), (sx * 1.12, -0.24, 0.22), (0, 0, sx * 0.04), blue, bevel=0),        # intake glow
-        box((0.12, 0.07, 0.07), (sx * 1.12, -1.46, 0.22), (0, 0, sx * 0.04), blue, bevel=0),        # engine glow
-        fin((sx * 1.12, -1.05, 0.27), 0.22, 0.30, 0.12, 0.05, 0.14, panel),                          # nacelle fin
-    ])
-    # stern: twin recessed thrusters + copper deflector at the chin
-    o += engine_block((0, -2.05, 0.02), 2, 0.16, panel, blue, spread=0.45)
-    o += [disc(0.20, 0.07, (0, 1.15, -0.24), copper)]
+    # waist spine (slim — the proportion contrast against hammer + stern sells the ship)
+    spine = smooth_stations([(1.9, 0.16, 0.16, 0.02), (1.0, 0.32, 0.34, 0.04),
+                             (0.0, 0.36, 0.36, 0.02), (-1.1, 0.42, 0.34, 0.0)], 4)
+    o += [loft_hull(xs_keel(1.0, -0.55, 0.2, 1.0), spine, white, bevel=0.045)]
+    # armor plate bands breaking up the spine
+    o += [plate_band(xs_keel(1.0, -0.55, 0.2, 1.0), spine, 0.85, 0.5, 1.07, panel)]
+    o += [plate_band(xs_keel(1.0, -0.55, 0.2, 1.0), spine, -0.1, -0.45, 1.07, panel)]
+    # THE HAMMER: bladed crossbar lofted across the bow, thicker at the tips
+    o += [loft_axis(XS_FOIL, [(-1.2, 0.80, 0.36, 1.62, 0.03), (-0.55, 0.72, 0.30, 1.70, 0.04),
+                              (0.0, 0.70, 0.30, 1.72, 0.05), (0.55, 0.72, 0.30, 1.70, 0.04),
+                              (1.2, 0.80, 0.36, 1.62, 0.03)], white, "X", 0.045, False, "hammer")]
+    # hammer tip pods: hex sensor housings + blue forward deflector eyes
+    o += pair(lambda sx: [prism(6, 0.15, 0.85, (sx * 1.26, 1.62, 0.03), (math.radians(90), 0, 0), steel, bevel=0.03),
+                          disc(0.10, 0.05, (sx * 1.26, 2.06, 0.03), blue)])
+    o += [box((0.9, 0.05, 0.045), (0, 1.78, 0.20), (0, 0, 0), gold, bevel=0.012)]   # gold brow line
+    # bridge tower amidships (stepped) + windows
+    o += [box((0.20, 0.34, 0.10), (0, 0.35, 0.44), (0, 0, 0), white, bevel=0.04)]
+    o += [box((0.13, 0.22, 0.08), (0, 0.30, 0.56), (0, 0, 0), panel, bevel=0.03)]
+    o += [box((0.09, 0.045, 0.03), (0, 0.47, 0.58), (0, 0, 0), blue, bevel=0)]
+    # turret row down the spine + gold dorsal ridge
+    for y in (1.05, 0.0, -0.75):
+        o += turret((0, y, 0.40), steel, steel, r=0.085, length=0.42)
+    o += [box((0.04, 1.35, 0.035), (0, 0.1, 0.38), (0, 0, 0), gold, bevel=0.01)]
+    # stern block: wide engineering slab + three engine bells + intake fins
+    stern = smooth_stations([(-1.0, 0.46, 0.30, 0.0), (-1.5, 0.66, 0.40, 0.0),
+                             (-2.0, 0.62, 0.38, 0.0), (-2.3, 0.50, 0.32, 0.0)], 3)
+    o += [loft_hull(xs_slab(1.0, 0.6), stern, white, bevel=0.05)]
+    o += window_strip(-1.2, -2.1, 0.62, 0.12, win, n=6)
+    o += pair(lambda sx: fin((sx * 0.55, -1.35, 0.30), 0.30, 0.45, 0.18, 0.05, 0.18, panel))
+    for dx in (-0.42, 0.0, 0.42):
+        o += nozzle((dx, -2.42, 0.0), 0.17, steel, blue, length=0.55)
     return o
 
 
 def kareth():
-    """Spirewing (Nature): a true manta — broad organic body flowing into huge swept
-    wings with bioluminescent leading-edge veins, whisker antennae, underslung pods."""
-    green = pmat("green", (0.10, 0.30, 0.19), 0.4, 0.5)
-    jade = pmat("jade", (0.18, 0.55, 0.42), 0.5, 0.42)
+    """Spirewing (Nature) — a gliding bird: slender teardrop body, huge CRESCENT wings
+    with glowing veins, and a fanned three-feather tail. Jade + cyan-green light."""
+    green = pmat("green", (0.09, 0.28, 0.18), 0.4, 0.5)
+    jade = pmat("jade", (0.16, 0.50, 0.38), 0.5, 0.42)
     glow = emat("glow", (0.49, 1.0, 0.77), 10)
     o = []
-    # organic central body (smooth-shaded loft, rounded section)
-    ctrl = [(2.1, 0.07, 0.07, 0.0), (1.3, 0.36, 0.30, 0.04), (0.3, 0.55, 0.42, 0.05),
-            (-0.7, 0.48, 0.36, 0.0), (-1.6, 0.24, 0.20, -0.04), (-2.1, 0.07, 0.08, -0.05)]
-    o += [loft_hull(xs_round(0.85, 0.75), smooth_stations(ctrl, 4), green, bevel=0.06, smooth=True)]
-    # the manta wings: big, swept, tapered
-    o += wing_pair((0.42, 0.15, 0.0), 1.35, 1.30, 0.30, 0.16, 1.05, 0.12, green)
-    # glowing leading-edge veins riding the wing surface (mirrored) + spine vein
-    o += pair(lambda sx: box((0.50, 0.028, 0.028), (sx * 0.90, 0.44, 0.075), (0, sx * 0.09, sx * -0.66), glow, bevel=0))
-    o += [box((0.03, 1.9, 0.03), (0, 0.0, 0.40), (0, 0, 0), glow, bevel=0)]
-    # cockpit teardrop + whisker antennae swept back from the nose (mirrored)
-    o += [sphere((0, 1.05, 0.28), (0.09, 0.16, 0.08), glow)]
-    o += pair(lambda sx: cyl(0.014, 0.9, (sx * 0.26, 1.55, 0.12), (math.radians(75), 0, sx * -0.5), jade, bevel=0))
-    # underslung engine pods (round = smooth), glow exhausts
-    o += pair(lambda sx: [
-        cyl(0.11, 0.9, (sx * 0.34, -1.0, -0.22), (math.radians(90), 0, 0), jade, smooth=True, bevel=0.03),
-        disc(0.08, 0.05, (sx * 0.34, -1.46, -0.22), glow),
-    ])
-    # tail stinger
-    o += [cone(0.06, 0.7, (0, -2.35, -0.02), (math.radians(90), 0, 0), jade)]
+    body = smooth_stations([(2.0, 0.06, 0.06, 0.0), (1.2, 0.30, 0.28, 0.05), (0.2, 0.42, 0.36, 0.05),
+                            (-0.8, 0.32, 0.28, 0.0), (-1.7, 0.12, 0.12, -0.03)], 4)
+    o += [loft_hull(xs_round(0.85, 0.75), body, green, bevel=0.06, smooth=True)]
+    # crescent wings: curved sweep (curve=1.9 bends the tips hard back)
+    o += wing_pair((0.30, 0.55, 0.03), 1.55, 1.15, 0.16, 0.13, 1.55, 0.20, green, curve=1.9)
+    # glowing veins tracking the wing's local sweep angle
+    for (fx, ln, ang, vz) in ((0.75, 0.40, 33, 0.085), (1.15, 0.34, 48, 0.115), (1.5, 0.26, 58, 0.15)):
+        o += pair(lambda sx, fx=fx, ln=ln, ang=ang, vz=vz:
+                  box((ln, 0.026, 0.024), (sx * fx, 0.62 - 0.62 * (fx / 1.85) ** 1.9 * 2.4, vz),
+                      (0, 0, sx * -math.radians(ang)), glow, bevel=0))
+    o += [box((0.028, 1.7, 0.026), (0, 0.1, 0.38), (0, 0, 0), glow, bevel=0)]   # spine vein
+    # fanned tail feathers (center + mirrored, angled outward)
+    o += [box((0.07, 0.62, 0.02), (0, -2.05, 0.02), (0, 0, 0), jade, bevel=0.025)]
+    o += pair(lambda sx: box((0.06, 0.5, 0.018), (sx * 0.22, -1.92, 0.02), (0, 0, sx * 0.38), jade, bevel=0.025))
+    o += pair(lambda sx: box((0.02, 0.06, 0.016), (sx * 0.40, -2.12, 0.02), (0, 0, sx * 0.38), glow, bevel=0))
+    o += [box((0.02, 0.07, 0.018), (0, -2.38, 0.02), (0, 0, 0), glow, bevel=0)]
+    # head: cockpit teardrop + swept whisker antennae
+    o += [sphere((0, 1.35, 0.20), (0.08, 0.15, 0.07), glow)]
+    o += pair(lambda sx: cyl(0.013, 0.8, (sx * 0.22, 1.6, 0.10), (math.radians(72), 0, sx * -0.55), jade, bevel=0))
+    # underslung engine pods, tucked close
+    o += pair(lambda sx: [cyl(0.10, 0.85, (sx * 0.30, -0.75, -0.20), (math.radians(90), 0, 0), jade, smooth=True, bevel=0.03),
+                          disc(0.075, 0.05, (sx * 0.30, -1.19, -0.20), glow)])
     return o
 
 
 def terra():
-    """Ironside (Frontier): a working freighter — cab up front, container racks amidships,
-    a heavy triple-thruster stern, fuel tanks below and a one-sided cargo crane."""
-    rust = pmat("rust", (0.5, 0.3, 0.16), 0.5, 0.8)
-    dark = pmat("dark", (0.28, 0.17, 0.10), 0.5, 0.85)
-    tan = pmat("tan", (0.7, 0.55, 0.3), 0.65, 0.6)
-    steel = pmat("steel", (0.45, 0.44, 0.42), 0.7, 0.5)
+    """Ironside (Frontier) — a TRUSS-SPINE hauler: tug cab, exposed lattice backbone
+    clamped with cargo containers, and a massive twin-bell engine block."""
+    rust = pmat("rust", (0.48, 0.28, 0.15), 0.5, 0.8)
+    dark = pmat("dark", (0.24, 0.15, 0.09), 0.5, 0.85)
+    tan = pmat("tan", (0.68, 0.53, 0.28), 0.65, 0.6)
+    steel = pmat("steel", (0.42, 0.41, 0.40), 0.7, 0.5)
     glow = emat("glow", (1.0, 0.5, 0.2), 10)
     win = emat("win", (1.0, 0.85, 0.5), 5)
     rng = random.Random(7)
     o = []
-    # spine hull: low slab, widest amidships
-    ctrl = [(1.8, 0.42, 0.34, 0.0), (1.0, 0.72, 0.46, 0.0), (0.0, 0.88, 0.52, 0.0),
-            (-1.0, 0.82, 0.50, 0.0), (-1.8, 0.55, 0.42, -0.02)]
-    o += [loft_hull(xs_slab(1.0, 0.55), smooth_stations(ctrl, 3), rust, bevel=0.07)]
-    # cab: stepped forward block with a lit window band
-    o += [box((0.34, 0.34, 0.20), (0, 1.55, 0.42), (0, 0, 0), tan, bevel=0.05)]
-    o += [box((0.30, 0.05, 0.05), (0, 1.88, 0.46), (0, 0, 0), win, bevel=0)]
-    o += antenna((0.12, 1.35, 0.52), 0.30, steel)
-    # container racks: two mirrored rows of alternating boxes sitting proud of the deck
-    mats = [tan, dark, steel]
-    for k in range(3):
-        y = 0.75 - k * 0.62
-        o += pair(lambda sx, y=y, k=k: box((0.26, 0.26, 0.22), (sx * 0.42, y, 0.60), (0, 0, 0), mats[k % 3], bevel=0.04))
-    o += [box((0.06, 1.9, 0.05), (0, 0.15, 0.52), (0, 0, 0), steel, bevel=0.02)]   # rack rail
-    # heavy stern: engine housing block + 3 recessed thrusters
-    o += [box((0.62, 0.40, 0.34), (0, -1.95, 0.02), (0, 0, 0), dark, bevel=0.06)]
-    o += engine_block((0, -2.3, 0.0), 3, 0.15, dark, glow, spread=0.40)
-    # under-slung fuel tanks (mirrored, round = smooth)
-    o += pair(lambda sx: cyl(0.16, 1.1, (sx * 0.5, -0.4, -0.38), (math.radians(90), 0, 0), steel, smooth=True, bevel=0.03))
-    # one-sided cargo crane (post + boom + hook), entirely on +x
-    o += [offside(box((0.05, 0.05, 0.30), (0.72, 0.35, 0.72), (0, 0, 0), steel, bevel=0.015))]
-    o += [offside(box((0.05, 0.34, 0.05), (0.72, 0.12, 0.95), (0, 0, 0), steel, bevel=0.015))]
-    o += [offside(box((0.03, 0.03, 0.10), (0.72, -0.15, 0.85), (0, 0, 0), dark, bevel=0))]
-    # scrappy one-sided patch plates low on the -x flank
-    o += greeble_strip(rng, 0.9, -1.2, -0.80, 0.12, dark, n=4, s=0.09)
+    # tug cab up front
+    cab = smooth_stations([(2.3, 0.22, 0.20, 0.0), (1.9, 0.46, 0.38, 0.02), (1.3, 0.50, 0.42, 0.0)], 3)
+    o += [loft_hull(xs_slab(1.0, 0.6), cab, rust, bevel=0.06)]
+    o += [box((0.30, 0.05, 0.055), (0, 2.18, 0.16), (0, 0, 0), win, bevel=0)]   # windshield band
+    o += antenna((0.14, 1.6, 0.44), 0.30, steel)
+    o += pair(lambda sx: box((0.07, 0.10, 0.07), (sx * 0.40, 2.02, 0.22), (0, 0, 0), steel, bevel=0.02))  # floodlights
+    # THE TRUSS: exposed lattice backbone
+    o += truss(1.3, -1.1, 0.26, 0.22, steel, bays=4)
+    # cargo containers clamped to the truss: side rows + one centered top row
+    mats = [tan, dark, steel, rust]
+    for k, y in enumerate((0.95, 0.40, -0.15, -0.70)):
+        o += pair(lambda sx, y=y, k=k: box((0.22, 0.24, 0.24), (sx * 0.50, y, 0.0), (0, 0, 0), mats[k % 4], bevel=0.04))
+    for k, y in enumerate((0.68, -0.42)):
+        o += [box((0.22, 0.24, 0.20), (0, y, 0.42), (0, 0, 0), mats[(k + 1) % 4], bevel=0.04)]
+    # engine block: heavy slab + two BIG bells + one service bell + dorsal radiators
+    blk = smooth_stations([(-1.1, 0.50, 0.38, 0.0), (-1.6, 0.72, 0.50, 0.0), (-2.2, 0.62, 0.44, 0.0)], 3)
+    o += [loft_hull(xs_slab(1.0, 0.6), blk, rust, bevel=0.06)]
+    o += pair(lambda sx: nozzle((sx * 0.34, -2.35, 0.0), 0.20, dark, glow, length=0.65))
+    o += nozzle((0, -2.30, 0.30), 0.10, dark, glow, length=0.4)
+    for y in (-1.35, -1.6, -1.85):
+        o += [box((0.5, 0.05, 0.10), (0, y, 0.50), (0, 0, 0), steel, bevel=0.015)]   # radiator ribs
+    o += window_strip(-1.35, -1.95, 0.66, 0.05, win, n=4)
+    # under-slung fuel tanks + one-sided crane on the cab roof
+    o += pair(lambda sx: cyl(0.15, 1.0, (sx * 0.42, -1.6, -0.44), (math.radians(90), 0, 0), steel, smooth=True, bevel=0.03))
+    o += [offside(box((0.045, 0.045, 0.26), (0.42, 1.45, 0.62), (0, 0, 0), steel, bevel=0.015))]
+    o += [offside(box((0.045, 0.30, 0.045), (0.42, 1.22, 0.84), (0, 0, 0), steel, bevel=0.015))]
+    o += [offside(box((0.028, 0.028, 0.09), (0.42, 0.98, 0.76), (0, 0, 0), dark, bevel=0))]
+    o += greeble_strip(rng, -1.3, -2.1, -0.70, 0.14, dark, n=4, s=0.08)
     return o
 
 
 def illumaria():
-    """Cipher (Shadow): a stealth arrowhead — one wide razor-flat delta with chined
-    edges, magenta slit lights, V-tail, and buried slit exhausts. No round parts."""
-    darkm = pmat("dark", (0.15, 0.13, 0.24), 0.8, 0.28)
-    trim = pmat("trim", (0.28, 0.22, 0.42), 0.8, 0.32)
+    """Cipher (Shadow) — a stealth CATAMARAN: twin dagger hulls bridged by a razor
+    wing, floating cockpit pod, magenta slit lights. No round parts anywhere."""
+    darkm = pmat("dark", (0.14, 0.12, 0.23), 0.8, 0.28)
+    trim = pmat("trim", (0.26, 0.20, 0.40), 0.8, 0.32)
     glow = emat("glow", (0.82, 0.29, 1.0), 11)
     o = []
-    # razor delta: thin lens section, planform widens hard toward the rear
-    ctrl = [(2.3, 0.04, 0.05, 0.0), (1.3, 0.55, 0.20, 0.02), (0.2, 1.10, 0.26, 0.02),
-            (-0.8, 1.45, 0.24, 0.0), (-1.3, 1.10, 0.18, -0.01), (-1.6, 0.45, 0.10, -0.02)]
-    o += [loft_hull(xs_lens(1.0, 0.28), smooth_stations(ctrl, 3), darkm, bevel=0.035)]
-    # raised center ridge (cockpit spine) + slit canopy light
-    ridge = [(1.5, 0.10, 0.06, 0.10), (0.6, 0.20, 0.10, 0.16), (-0.6, 0.16, 0.08, 0.12), (-1.3, 0.08, 0.04, 0.06)]
-    o += [loft_hull(xs_keel(1.0, -0.2, 0.3, 1.0), smooth_stations(ridge, 3), trim, bevel=0.03)]
-    o += [box((0.045, 0.30, 0.022), (0, 0.95, 0.20), (0, 0, 0), glow, bevel=0)]
-    # mirrored chevron slit lights on the upper skin, following the leading edge
-    o += pair(lambda sx: box((0.42, 0.030, 0.022), (sx * 0.62, 0.45, 0.135), (0, 0, sx * -0.94), glow, bevel=0))
-    o += pair(lambda sx: box((0.30, 0.026, 0.020), (sx * 0.95, -0.35, 0.115), (0, 0, sx * -0.94), glow, bevel=0))
-    # canted V-tail fins near the stern
-    o += pair(lambda sx: fin((sx * 0.55, -1.15, 0.10), 0.45, 0.42, 0.16, 0.05, 0.30, trim))
-    # buried engines: wide slit exhausts at the trailing edge (stealth, no discs)
-    o += pair(lambda sx: box((0.30, 0.05, 0.035), (sx * 0.48, -1.52, 0.02), (0, 0, sx * 0.22), glow, bevel=0))
+    # twin dagger hulls, toed slightly outward toward the stern
+    hull_xs = xs_lens(0.55, 0.34)
+    o += pair(lambda sx: loft_axis(hull_xs, smooth_stations([
+        (2.2, 0.07, 0.06, sx * 0.50, 0.0), (1.2, 0.30, 0.24, sx * 0.56, 0.02),
+        (0.2, 0.42, 0.30, sx * 0.62, 0.03), (-0.8, 0.36, 0.26, sx * 0.68, 0.0),
+        (-1.6, 0.14, 0.12, sx * 0.72, -0.02)], 4), darkm, "Y", 0.035, False, "cat"))
+    # razor bridge wing joining the hulls
+    o += [loft_hull(xs_lens(1.0, 0.16), smooth_stations([
+        (0.9, 0.40, 0.09, 0.02), (0.3, 0.85, 0.11, 0.03), (-0.4, 0.85, 0.10, 0.02), (-1.0, 0.45, 0.08, 0.0)], 3),
+        darkm, bevel=0.03)]
+    # floating cockpit pod on the centerline + slit canopy
+    o += [loft_hull(xs_diamond(), smooth_stations([
+        (1.5, 0.05, 0.05, 0.10), (0.9, 0.16, 0.13, 0.14), (0.1, 0.14, 0.11, 0.12), (-0.5, 0.06, 0.05, 0.08)], 3),
+        trim, bevel=0.03)]
+    o += [box((0.04, 0.30, 0.02), (0, 0.75, 0.27), (0, 0, 0), glow, bevel=0)]
+    # slit lights: inner hull walls + chevrons on the bridge wing
+    o += pair(lambda sx: box((0.02, 0.7, 0.024), (sx * 0.40, 0.35, 0.10), (0, 0, 0), glow, bevel=0))
+    o += pair(lambda sx: box((0.30, 0.028, 0.022), (sx * 0.30, -0.15, 0.095), (0, 0, sx * -0.55), glow, bevel=0))
+    # canted fins on each hull tail + slit exhausts
+    o += pair(lambda sx: fin((sx * 0.70, -1.05, 0.10), 0.40, 0.38, 0.14, 0.045, 0.26, trim))
+    o += pair(lambda sx: box((0.11, 0.05, 0.032), (sx * 0.70, -1.68, -0.02), (0, 0, 0), glow, bevel=0))
     return o
 
 
 def astryn():
-    """Freehold (Rebels): a scrappy gunship — compact keel hull, big swept wings with
-    tip guns, nose cannons, and honest one-sided junk (sensor boom, strapped pod)."""
-    olive = pmat("olive", (0.36, 0.4, 0.27), 0.5, 0.7)
-    darkm = pmat("dark", (0.2, 0.22, 0.14), 0.5, 0.8)
+    """Freehold (Rebels) — a TWIN-BOOM attacker: gunship fuselage with a nose gatling
+    cluster, stub wings carrying missile racks, tail booms joined by a plank elevator,
+    and a dorsal turret. Olive drab, scrappy one-sided kit."""
+    olive = pmat("olive", (0.34, 0.38, 0.25), 0.5, 0.7)
+    darkm = pmat("dark", (0.19, 0.21, 0.13), 0.5, 0.8)
     orange = pmat("orange", (0.84, 0.51, 0.18), 0.6, 0.5)
     steel = pmat("steel", (0.4, 0.4, 0.38), 0.7, 0.55)
     glow = emat("glow", (0.61, 0.91, 0.29), 10)
     rng = random.Random(42)
     o = []
-    # compact keel hull
-    ctrl = [(1.7, 0.09, 0.09, 0.0), (1.0, 0.38, 0.34, 0.03), (0.1, 0.56, 0.46, 0.03),
-            (-0.8, 0.50, 0.40, -0.01), (-1.5, 0.24, 0.20, -0.03)]
-    o += [loft_hull(xs_keel(0.95, -0.5, 0.2, 1.0), smooth_stations(ctrl, 4), olive, bevel=0.05)]
-    # big swept wings with orange wingtip fairings + underwing gun pods
-    o += wing_pair((0.40, -0.30, 0.02), 1.05, 0.85, 0.30, 0.13, 0.70, 0.06, olive)
-    o += pair(lambda sx: box((0.09, 0.30, 0.06), (sx * 1.42, -0.98, 0.10), (0, 0, sx * -0.58), orange, bevel=0.03))
-    o += pair(lambda sx: [
-        cyl(0.07, 0.42, (sx * 0.95, -0.55, -0.10), (math.radians(90), 0, 0), darkm, smooth=True, bevel=0.02),
-        cyl(0.022, 0.55, (sx * 0.95, -0.20, -0.10), (math.radians(90), 0, 0), steel, smooth=True, bevel=0),
-    ])
-    # nose cannons + cockpit glow
-    o += pair(lambda sx: cyl(0.028, 0.8, (sx * 0.14, 1.45, 0.10), (math.radians(90), 0, 0), steel, smooth=True, bevel=0))
-    o += [box((0.10, 0.22, 0.05), (0, 0.75, 0.42), (0, 0, 0), glow, bevel=0.02)]
-    # stern engines
-    o += engine_block((0, -1.55, 0.0), 2, 0.14, darkm, glow, spread=0.38)
-    # scrappy asymmetry (each piece entirely one-sided):
-    o += [offside(cyl(0.016, 0.75, (0.30, 1.0, 0.30), (math.radians(70), 0, -0.3), steel, bevel=0))]      # sensor boom (+x)
-    o += [offside(box((0.14, 0.34, 0.14), (-0.42, 0.15, 0.34), (0, 0, 0.1), darkm, bevel=0.04))]          # strapped pod (-x)
-    o += [offside(box((0.15, 0.03, 0.15), (-0.42, 0.15, 0.34), (0, 0, 0), steel, bevel=0))]               # its strap
-    o += greeble_strip(rng, 0.6, -0.9, 0.38, 0.34, darkm, n=4, s=0.08)                                     # patch plates (+x)
+    # stubby fuselage
+    body = smooth_stations([(1.9, 0.10, 0.10, 0.0), (1.1, 0.40, 0.36, 0.03), (0.1, 0.52, 0.44, 0.02),
+                            (-0.9, 0.38, 0.32, -0.01), (-1.3, 0.22, 0.20, -0.02)], 4)
+    o += [loft_hull(xs_keel(0.95, -0.5, 0.2, 1.0), body, olive, bevel=0.05)]
+    # nose gatling cluster (center + mirrored barrels) with a muzzle ring
+    o += [cyl(0.03, 0.85, (0, 2.0, -0.02), (math.radians(90), 0, 0), steel, smooth=True, bevel=0)]
+    o += pair(lambda sx: cyl(0.024, 0.75, (sx * 0.06, 1.95, 0.03), (math.radians(90), 0, 0), steel, smooth=True, bevel=0))
+    o += [torus(0.07, 0.016, (0, 1.75, 0.0), darkm, rot=(math.radians(90), 0, 0))]
+    # stub wings + underwing missile racks
+    o += wing_pair((0.42, -0.05, 0.06), 0.95, 0.72, 0.34, 0.12, 0.35, 0.03, olive)
+    o += pair(lambda sx: missile_rack((sx * 0.98, -0.12, -0.06), 2, 3, darkm))
+    o += pair(lambda sx: box((0.08, 0.26, 0.05), (sx * 1.34, -0.28, 0.07), (0, 0, sx * -0.35), orange, bevel=0.03))
+    # dorsal turret + cockpit glow
+    o += turret((0, 0.55, 0.44), steel, steel, r=0.10, length=0.5)
+    o += [box((0.10, 0.22, 0.045), (0, 1.15, 0.30), (0, 0, 0), glow, bevel=0.02)]
+    # twin tail booms flowing back from the wings, joined by a plank elevator
+    o += pair(lambda sx: loft_axis(xs_round(1.0, 1.0), smooth_stations([
+        (-0.3, 0.10, 0.11, sx * 0.52, 0.02), (-1.2, 0.085, 0.095, sx * 0.55, 0.02), (-1.95, 0.045, 0.05, sx * 0.55, 0.06)], 3),
+        olive, "Y", 0.03, True, "boom"))
+    o += [box((0.62, 0.14, 0.028), (0, -1.85, 0.14), (0, 0, 0), olive, bevel=0.03)]
+    o += pair(lambda sx: fin((sx * 0.55, -1.75, 0.10), 0.30, 0.26, 0.10, 0.04, 0.16, darkm))
+    # engines at the fuselage stern + boom tip lights
+    o += pair(lambda sx: nozzle((sx * 0.20, -1.42, 0.0), 0.12, darkm, glow, length=0.42))
+    o += pair(lambda sx: box((0.03, 0.05, 0.03), (sx * 0.55, -2.0, 0.06), (0, 0, 0), glow, bevel=0))
+    # scrappy one-sided kit
+    o += [offside(cyl(0.015, 0.7, (0.28, 1.15, 0.30), (math.radians(68), 0, -0.3), steel, bevel=0))]   # sensor boom (+x)
+    o += [offside(box((0.13, 0.30, 0.13), (-0.40, 0.15, 0.30), (0, 0, 0.1), darkm, bevel=0.04))]        # strapped pod (-x)
+    o += [offside(box((0.14, 0.028, 0.14), (-0.40, 0.15, 0.30), (0, 0, 0), steel, bevel=0))]
+    o += greeble_strip(rng, 0.7, -0.6, 0.34, 0.34, darkm, n=4, s=0.075)
     return o
 
 
 def ezrathi():
-    """Threnody (Void cult): a cathedral monolith — tall obsidian hull with dorsal and
-    ventral spires, ribbed flanks, a glowing rune ring, and trailing rear spikes."""
-    obs = pmat("obs", (0.1, 0.085, 0.13), 0.45, 0.4)
-    violet = pmat("violet", (0.42, 0.25, 0.63), 0.6, 0.4)
+    """Threnody (Void cult) — a CATHEDRAL ark: bow lance, tall blade hull with flying
+    buttresses, arched window rows, and three shrinking halo rings trailing aft."""
+    obs = pmat("obs", (0.09, 0.08, 0.12), 0.45, 0.4)
+    violet = pmat("violet", (0.40, 0.23, 0.60), 0.6, 0.4)
     glow = emat("glow", (0.55, 1.0, 0.42), 12)
     vglow = emat("vglow", (0.55, 0.3, 1.0), 9)
     o = []
-    # tall monolith hull
-    ctrl = [(2.0, 0.07, 0.14, 0.0), (1.2, 0.40, 0.72, 0.0), (0.2, 0.60, 1.00, 0.0),
-            (-0.8, 0.52, 0.85, 0.0), (-1.6, 0.28, 0.48, 0.0), (-2.0, 0.10, 0.18, -0.02)]
-    o += [loft_hull(xs_tall(0.55, 1.05), smooth_stations(ctrl, 4), obs, bevel=0.03)]
-    # spires: tall dorsal blade, shorter ventral spike, bow blade
-    o += [fin((0, -0.15, 0.85), 0.85, 0.55, 0.10, 0.07, 0.30, obs)]
-    o += [fin((0, -0.15, -0.55), -0.55, 0.45, 0.10, 0.06, 0.22, obs)]
-    o += [fin((0, 1.45, 0.30), 0.45, 0.30, 0.06, 0.05, -0.18, violet)]
-    # ribbed flanks: mirrored angled rib plates seated into the hull sides
-    for k in range(4):
-        y = 0.9 - k * 0.55
-        o += pair(lambda sx, y=y: box((0.05, 0.10, 0.50), (sx * 0.40, y, 0.10), (math.radians(-12), 0, 0), violet, bevel=0.02))
-    # glowing rune ring circling the hull + void core
-    o += [torus(0.78, 0.030, (0, 0.25, 0.10), glow, rot=(math.radians(90), 0, 0))]
-    o += [prism(8, 0.22, 0.16, (0, 0.25, 0.95), (0, 0, 0), glow, bevel=0)]
-    # trailing spikes swept off the stern (mirrored) + violet drive slits
-    o += pair(lambda sx: cone(0.05, 0.9, (sx * 0.35, -2.15, 0.15), (math.radians(-84), 0, sx * 0.25), obs))
-    o += pair(lambda sx: box((0.10, 0.06, 0.16), (sx * 0.22, -1.95, 0.0), (0, 0, 0), vglow, bevel=0))
+    hull_sts = smooth_stations([(2.0, 0.07, 0.14, 0.0), (1.2, 0.38, 0.70, 0.0), (0.2, 0.58, 1.02, 0.0),
+                                (-0.8, 0.48, 0.82, 0.0), (-1.6, 0.26, 0.45, 0.0), (-2.1, 0.09, 0.16, -0.02)], 4)
+    o += [loft_hull(xs_tall(0.55, 1.05), hull_sts, obs, bevel=0.03)]
+    # bow lance: long needle + glow collar
+    o += [cyl(0.035, 1.1, (0, 2.5, 0.15), (math.radians(90), 0, 0), violet, smooth=True, bevel=0)]
+    o += [cone(0.05, 0.35, (0, 3.15, 0.15), (math.radians(-90), 0, 0), obs)]
+    o += [torus(0.075, 0.018, (0, 2.05, 0.15), glow, rot=(math.radians(90), 0, 0))]
+    # spires: two dorsal blades + a long ventral keel
+    o += [fin((0, 0.15, 1.00), 0.85, 0.55, 0.10, 0.06, 0.30, obs)]
+    o += [fin((0, -0.75, 0.80), 0.55, 0.40, 0.08, 0.05, 0.22, obs)]
+    o += [fin((0, -0.35, -0.85), -0.55, 0.75, 0.16, 0.06, 0.35, obs)]
+    # flying buttresses: mirrored struts sweeping down the flanks
+    for y in (0.7, 0.1, -0.5):
+        o += pair(lambda sx, y=y: box((0.30, 0.045, 0.032), (sx * 0.42, y, -0.10), (0, sx * 0.55, 0), violet, bevel=0.015))
+    # arched window rows (two tiers)
+    o += window_strip(1.0, -0.7, 0.40, 0.35, glow, n=7, size=0.024)
+    o += window_strip(0.8, -0.5, 0.48, -0.05, glow, n=5, size=0.024)
+    # ritual core + THE HALOS: three shrinking rune rings trailing aft
+    o += [prism(8, 0.20, 0.14, (0, 0.55, 1.02), (0, 0, 0), glow, bevel=0)]
+    for (y, r) in ((-1.15, 0.72), (-1.55, 0.52), (-1.9, 0.34)):
+        o += [torus(r, 0.024, (0, y, 0.10), vglow, rot=(math.radians(90), 0, 0))]
+    # drive slits
+    o += pair(lambda sx: box((0.09, 0.05, 0.15), (sx * 0.20, -2.05, 0.0), (0, 0, 0), vglow, bevel=0))
     return o
 
 
 def krithul():
-    """Rotmaw (Plague): a segmented leviathan — bulbous body with ridge rings, a glowing
-    maw, rear tentacle spikes, pustule clusters and one lopsided growth."""
-    flesh = pmat("flesh", (0.43, 0.48, 0.18), 0.12, 0.88)
-    darkm = pmat("dark", (0.3, 0.32, 0.12), 0.2, 0.85)
+    """Rotmaw (Plague) — an armored ISOPOD: overlapping carapace bands over a fat body,
+    mandible pincers around a glowing maw, rows of legs beneath, and a spiked telson."""
+    flesh = pmat("flesh", (0.46, 0.50, 0.20), 0.12, 0.88)
+    chitin = pmat("chitin", (0.16, 0.18, 0.06), 0.3, 0.62)
+    darkm = pmat("dark", (0.13, 0.14, 0.05), 0.2, 0.85)
     glow = emat("glow", (0.78, 1.0, 0.23), 11)
     o = []
-    # bulbous smooth body
-    ctrl = [(1.7, 0.14, 0.14, 0.0), (0.9, 0.52, 0.52, 0.02), (0.0, 0.70, 0.72, 0.0),
-            (-0.9, 0.56, 0.58, 0.0), (-1.6, 0.30, 0.30, -0.02), (-1.95, 0.12, 0.12, -0.04)]
-    o += [loft_hull(xs_round(0.75, 0.8), smooth_stations(ctrl, 4), flesh, bevel=0.1, smooth=True)]
-    # segmentation: ridge rings around the body (organic tori)
-    for (y, r) in ((0.65, 0.47), (0.0, 0.55), (-0.65, 0.47)):
-        o += [torus(r, 0.035, (0, y, 0.0), darkm, rot=(math.radians(90), 0, 0))]
-    # glowing maw at the bow (rimmed) + dorsal pustule cluster
-    o += [cone(0.16, 0.35, (0, 1.75, 0), (math.radians(-90), 0, 0), darkm)]
-    o += [disc(0.10, 0.05, (0, 1.72, 0), glow)]
-    o += [sphere((0, 0.45, 0.62), (0.11, 0.11, 0.11), glow)]
-    o += pair(lambda sx: sphere((sx * 0.16, 0.25, 0.60), (0.07, 0.07, 0.07), glow))
-    # rear tentacle spikes: mirrored pairs swept back + one ventral center
-    o += pair(lambda sx: cone(0.07, 1.1, (sx * 0.42, -1.75, 0.05), (math.radians(-80), 0, sx * 0.35), flesh))
-    o += pair(lambda sx: cone(0.05, 0.85, (sx * 0.30, -1.65, 0.30), (math.radians(-70), 0, sx * 0.18), darkm))
-    o += [cone(0.06, 0.95, (0, -1.75, -0.25), (math.radians(-100), 0, 0), flesh)]
-    # drive glow tucked between the tentacles + one-sided tumor growth
-    o += [disc(0.16, 0.06, (0, -1.55, 0.0), glow)]
-    o += [offside(sphere((0.45, 0.1, 0.28), (0.22, 0.28, 0.20), flesh, bevel=0))]
-    o += [offside(sphere((0.52, 0.28, 0.38), (0.06, 0.06, 0.06), glow))]
+    body_sts = smooth_stations([(1.7, 0.16, 0.15, 0.0), (0.9, 0.52, 0.50, 0.04), (0.0, 0.68, 0.66, 0.02),
+                                (-0.9, 0.54, 0.52, 0.0), (-1.7, 0.26, 0.24, -0.03), (-2.0, 0.10, 0.10, -0.05)], 4)
+    body_xs = xs_round(0.78, 0.85)
+    o += [loft_hull(body_xs, body_sts, flesh, bevel=0.1, smooth=True)]
+    # THE CARAPACE: separated armor bands with flesh showing through the seams
+    for (y0, y1, gr) in ((1.20, 0.85, 1.06), (0.70, 0.28, 1.10), (0.12, -0.30, 1.11),
+                         (-0.46, -0.86, 1.09), (-1.00, -1.36, 1.06)):
+        o += [plate_band(body_xs, body_sts, y0, y1, gr, chitin, bevel=0.05)]
+    # glow sacs in the exposed seams (mirrored)
+    for y in (0.775, 0.20, -0.38, -0.93):
+        o += pair(lambda sx, y=y: sphere((sx * 0.32, y, 0.42), (0.05, 0.05, 0.05), glow))
+    # mandible pincers curling toward (not across) the centerline + glowing maw
+    o += pair(lambda sx: [box((0.09, 0.36, 0.10), (sx * 0.32, 1.78, -0.06), (0, 0, sx * -0.5), darkm, bevel=0.04),
+                          box((0.055, 0.24, 0.075), (sx * 0.18, 2.06, -0.06), (0, 0, sx * -0.85), darkm, bevel=0.04)])
+    o += [cone(0.15, 0.3, (0, 1.85, -0.02), (math.radians(-90), 0, 0), darkm)]
+    o += [disc(0.09, 0.05, (0, 1.86, -0.02), glow)]
+    # legs: five mirrored pairs beneath the carapace
+    for i in range(5):
+        y = 1.0 - i * 0.5
+        o += pair(lambda sx, y=y: cone(0.035, 0.42, (sx * 0.42, y, -0.52), (math.radians(-25), 0, sx * -0.9), darkm))
+    # telson: center tail spike + mirrored side spikes + tucked drive glow
+    o += [cone(0.07, 0.9, (0, -2.35, -0.02), (math.radians(90), 0, 0), chitin)]
+    o += pair(lambda sx: cone(0.045, 0.65, (sx * 0.26, -2.1, 0.10), (math.radians(-80), 0, sx * 0.3), chitin))
+    o += [disc(0.13, 0.06, (0, -1.85, -0.12), glow)]
+    # one lopsided growth breaking the symmetry (entirely on +x)
+    o += [offside(sphere((0.42, 0.55, 0.30), (0.18, 0.24, 0.16), flesh, bevel=0))]
+    o += [offside(sphere((0.50, 0.70, 0.42), (0.055, 0.055, 0.055), glow))]
     return o
 
 
 def shadur():
-    """Nightglass (Stealth): a night dagger — needle hull with a split-prong bow,
-    forward-swept fins, a shark tail, and slit cyan lights. Unmistakable planform."""
-    darkm = pmat("dark", (0.086, 0.125, 0.18), 0.74, 0.28)
-    trim = pmat("trim", (0.16, 0.36, 0.42), 0.7, 0.3)
+    """Nightglass (Stealth) — a diving RAPTOR: needle hull, fore canards, big mid wings
+    FOLDED downward like a stooping falcon, one tall tail. Cyan edge lights only."""
+    darkm = pmat("dark", (0.08, 0.115, 0.17), 0.74, 0.28)
+    trim = pmat("trim", (0.15, 0.33, 0.40), 0.7, 0.3)
     glow = emat("glow", (0.22, 0.9, 1.0), 12)
     o = []
-    # long needle hull
-    ctrl = [(2.0, 0.06, 0.09, 0.0), (1.2, 0.30, 0.40, 0.0), (0.2, 0.46, 0.58, 0.0),
-            (-0.8, 0.40, 0.50, 0.0), (-1.7, 0.24, 0.30, 0.0), (-2.3, 0.08, 0.10, 0.0)]
-    o += [loft_hull(xs_diamond(), smooth_stations(ctrl, 4), darkm, bevel=0.03)]
-    # split-prong bow: mirrored forward blades flanking the nose (trident silhouette)
-    o += pair(lambda sx: loft_axis(XS_FOIL, [
-        (sx * 0.22, 0.9, 0.14, 1.30, 0.0), (sx * 0.34, 0.6, 0.10, 2.05, 0.02), (sx * 0.40, 0.25, 0.06, 2.45, 0.03),
-    ], darkm, "X", 0.03, False, "prong"))
-    # forward-swept mid fins (negative sweep — reads instantly in top view)
-    o += wing_pair((0.34, -0.75, 0.06), 0.80, 0.62, 0.22, 0.10, -0.55, 0.05, darkm)
-    # shark tail: tall dorsal fin + short ventral
-    o += [fin((0, -1.85, 0.25), 0.60, 0.50, 0.14, 0.06, 0.35, trim)]
-    o += [fin((0, -1.85, -0.20), -0.30, 0.35, 0.10, 0.05, 0.18, trim)]
-    # slit lights: spine + canopy + wing leading edges
-    o += [box((0.024, 1.1, 0.02), (0, -0.15, 0.55), (0, 0, 0), glow, bevel=0)]
-    o += [box((0.05, 0.30, 0.024), (0, 0.85, 0.35), (0, 0, 0), glow, bevel=0)]
-    o += pair(lambda sx: box((0.30, 0.024, 0.02), (sx * 0.72, -0.52, 0.10), (0, 0, sx * 0.60), glow, bevel=0))
-    # buried slit exhausts either side of the tail
-    o += pair(lambda sx: box((0.14, 0.05, 0.03), (sx * 0.20, -2.32, 0.0), (0, 0, 0), glow, bevel=0))
+    body = smooth_stations([(2.5, 0.05, 0.08, 0.0), (1.4, 0.26, 0.36, 0.0), (0.3, 0.40, 0.52, 0.0),
+                            (-0.8, 0.34, 0.44, 0.0), (-1.8, 0.18, 0.24, 0.0), (-2.3, 0.07, 0.09, 0.0)], 4)
+    o += [loft_hull(xs_diamond(), body, darkm, bevel=0.03)]
+    # fore canards (small, swept)
+    o += wing_pair((0.18, 1.55, 0.06), 0.45, 0.32, 0.12, 0.06, 0.30, 0.04, trim)
+    # THE FOLDED WINGS: big anhedral crescents like a falcon mid-stoop
+    o += wing_pair((0.32, -0.35, 0.14), 1.25, 0.85, 0.20, 0.12, 0.95, -0.62, darkm, curve=1.35)
+    # wingtip claws + edge lights
+    o += pair(lambda sx: cone(0.035, 0.30, (sx * 1.60, -1.32, -0.50), (math.radians(90), 0, 0), trim))
+    o += pair(lambda sx: box((0.30, 0.024, 0.02), (sx * 0.78, -0.62, 0.07), (0, sx * -0.32, sx * 0.62), glow, bevel=0))
+    # tall single tail + short ventral hook
+    o += [fin((0, -1.95, 0.28), 0.70, 0.52, 0.16, 0.06, 0.45, darkm)]
+    o += [fin((0, -1.9, -0.24), -0.28, 0.30, 0.10, 0.05, 0.14, trim)]
+    o += [box((0.03, 0.06, 0.02), (0, -2.42, 0.95), (0, 0, 0), glow, bevel=0)]   # tail beacon
+    # spine + canopy slit lights, buried slit exhausts
+    o += [box((0.022, 1.2, 0.02), (0, 0.2, 0.53), (0, 0, 0), glow, bevel=0)]
+    o += [box((0.045, 0.30, 0.022), (0, 1.15, 0.38), (0, 0, 0), glow, bevel=0)]
+    o += pair(lambda sx: box((0.13, 0.05, 0.028), (sx * 0.18, -2.42, 0.0), (0, 0, 0), glow, bevel=0))
     return o
 
 
@@ -535,7 +631,7 @@ BUILDERS = {
 def setup_world():
     w = bpy.data.worlds.new("w"); bpy.context.scene.world = w; w.use_nodes = True
     bg = w.node_tree.nodes["Background"]
-    bg.inputs["Color"].default_value = (0.05, 0.06, 0.09, 1); bg.inputs["Strength"].default_value = 0.5
+    bg.inputs["Color"].default_value = (0.05, 0.06, 0.09, 1); bg.inputs["Strength"].default_value = 0.3
 
 
 def add_lights():
@@ -544,9 +640,9 @@ def add_lights():
         o = bpy.data.objects.new("L", l); o.location = loc
         bpy.context.collection.objects.link(o)
         o.rotation_euler = (Vector((0, 0, 0)) - Vector(loc)).to_track_quat("-Z", "Y").to_euler(); return o
-    area((-4, -2, 6), 1400, 7, (0.95, 0.97, 1.0))
-    area((5, -1, 3), 450, 7, (0.8, 0.85, 1.0))
-    area((0, 5, 2.5), 600, 6, (1.0, 0.9, 0.8))
+    area((-4, -2, 6), 1600, 6, (0.95, 0.97, 1.0))   # key: stronger, tighter
+    area((5, -1, 3), 220, 7, (0.8, 0.85, 1.0))      # dim fill so form shadows read
+    area((0, 5, 2.5), 380, 6, (1.0, 0.9, 0.8))      # warm back/rim
 
 
 def _cam(objs, dir_vec, up):
