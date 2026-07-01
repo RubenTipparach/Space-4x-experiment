@@ -40,12 +40,21 @@ Messy ships come from asymmetric parts straddling the centerline. The discipline
    important part and must read at a distance, so give it a **unique silhouette in all
    three views** (top, side, front). Use **`loft_hull(shape, stations, ...)`**: a
    cross-section `shape` (the FRONT profile) lofted along the length, with per-station
-   `width` (the TOP profile) and `height`+`z_offset` (the SIDE profile). If all three
-   silhouettes are non-rectangular, the ship type is identifiable from far away. Avoid
-   plain boxes/discs for the core. Build a **symmetric core first** — `loft_hull` is
-   symmetric by construction; other core pieces are **centered on `x = 0`** or added as
-   **mirrored pairs** via `pair(lambda sx: ...)`. Major features (wings, nacelles,
-   engines, fins) are mirrored pairs, never one-off asymmetric shapes.
+   `width` (the TOP profile) and `height`+`z_offset` (the SIDE profile). Pass hand-placed
+   control stations through **`smooth_stations(ctrl, steps)`** (Catmull-Rom resampling)
+   so hulls curve smoothly instead of kinking at each station. If all three silhouettes
+   are non-rectangular, the ship type is identifiable from far away. Avoid plain
+   boxes/discs for the core. Build a **symmetric core first** — `loft_hull` is symmetric
+   by construction; other core pieces are **centered on `x = 0`** or added as **mirrored
+   pairs** via `pair(lambda sx: ...)`. Major features (wings, nacelles, engines, fins)
+   are mirrored pairs, never one-off asymmetric shapes. Use the loft-based part helpers,
+   not scaled boxes: **`wing_pair`** (tapered/swept/dihedral wings; negative sweep =
+   forward-swept), **`fin`** (stabilizers/spires; negative height = ventral),
+   **`engine_block`** (thruster housings with recessed glow nozzles), **`window_strip`**
+   (mirrored emissive window rows), **`greeble_strip`** (deterministic mechanical blocks,
+   one-sided via `offside` or `mirror=True`), `antenna`, and `loft_axis` for anything
+   lofted along X/Z. `emat(name, color, strength)` glow materials also bake a base color
+   so glow parts keep their tint in-game (the client strips emission on load).
 3. **Add asymmetry only as detail that never crosses the centerline.** Any non-centered,
    non-mirrored shape must lie **entirely on one side** of `x = 0`. Wrap every such
    shape in **`offside(...)`**, which asserts/pushes the shape so its bounding box does
