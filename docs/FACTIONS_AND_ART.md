@@ -292,7 +292,13 @@ approved.
 ### 5b. Ship classes (per faction)
 
 Every faction fields the **same six ship classes** (one of each at launch), themed in
-its own design language. Classes map to the gameplay roles in `GAME_DESIGN.md` §3:
+its own design language. Classes map to the gameplay roles in `GAME_DESIGN.md` §3.
+**Modeled so far: Scout, Harvester and Cruiser for all 8 factions** — every builder in
+`scripts/concept/blender_clean.py` takes a `cls` argument, and `BUILDERS` exposes
+`<faction>`, `<faction>-scout` and `<faction>-harvester` ids (same signature structure
+and palette per faction; class changes proportions and kit). The client's fleet mixes
+classes with real stat profiles (`CLASS_STATS` in `client/src/data.ts`: speed/accel/
+turn/cargo/mining-rate multipliers + in-world size).
 
 | Class | Gameplay role | Notes |
 | --- | --- | --- |

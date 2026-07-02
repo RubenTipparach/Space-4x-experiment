@@ -9,7 +9,7 @@ import { makePlanet, makeStar, makeNebula, type Planet } from './planet.ts';
 import { makeHQCity, type HQCity } from './hqcity.ts';
 import { makeGalaxy3D, makeHyperspace, type Galaxy3D, type Hyperspace } from './galaxymap.ts';
 import {
-  FACTIONS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
+  FACTIONS, CLASS_STATS, PLANETS, GAS_NODES, RES_COLOR, RESOURCE_LABEL, type ResourceTag,
 } from './data.ts';
 
 const BASE = import.meta.env.BASE_URL;
@@ -175,12 +175,53 @@ async function main() {
 
   // ---------- asteroid belt (in the clear gap between Bronce and the gas giants) ----------
   addBelt(scene);
+  // minable fields: clusters of dark rocks shot through with GLOWING mineral shards
+  // (emissive crystals + a colored light + a slow pulse animated in the frame loop)
+  const mineralPulse: { mats: THREE.MeshStandardMaterial[]; sprites: THREE.SpriteMaterial[]; light: THREE.PointLight; phase: number }[] = [];
+  const shardGeo = new THREE.OctahedronGeometry(1, 0);
+  // soft radial halo texture (additive sprites fake the bloom around each shard)
+  const haloCv = document.createElement('canvas'); haloCv.width = haloCv.height = 64;
+  const hctx = haloCv.getContext('2d')!;
+  const hgrad = hctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  hgrad.addColorStop(0, 'rgba(255,255,255,0.9)'); hgrad.addColorStop(0.4, 'rgba(255,255,255,0.35)'); hgrad.addColorStop(1, 'rgba(255,255,255,0)');
+  hctx.fillStyle = hgrad; hctx.fillRect(0, 0, 64, 64);
+  const haloTex = new THREE.CanvasTexture(haloCv);
   for (const [frac, res] of [[0.2, 'ore'], [0.65, 'crystal']] as const) {
     const a = frac * Math.PI * 2, r = BELT_R;
-    const cluster = new THREE.Mesh(new THREE.IcosahedronGeometry(9, 0),
-      new THREE.MeshStandardMaterial({ color: res === 'ore' ? 0xb98a5a : 0x9be8ff, emissive: res === 'ore' ? 0x3a2a14 : 0x184a55, roughness: 0.8, metalness: 0.2, flatShading: true }));
+    const cluster = new THREE.Group();
     cluster.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); scene.add(cluster);
-    const mt: MineTarget = { name: res === 'ore' ? 'Ore Field' : 'Crystal Field', resource: res, radius: 16, pos: () => cluster.position.clone() };
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x4d453c, roughness: 0.95, metalness: 0.05, flatShading: true });
+    const glowHex = res === 'ore' ? 0xffa63c : 0x6fe8ff;   // amber ore veins / icy crystal
+    const shardMats: THREE.MeshStandardMaterial[] = [];
+    const shardSprites: THREE.SpriteMaterial[] = [];
+    // a seeded handful of tumbled rocks, each studded with glowing shards
+    let sd = res === 'ore' ? 7 : 23; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+    for (let k = 0; k < 5; k++) {
+      const rr = 5.5 + rnd() * 5;
+      const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 0), rockMat);
+      rock.position.set((rnd() - 0.5) * 26, (rnd() - 0.5) * 6, (rnd() - 0.5) * 26);
+      rock.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+      cluster.add(rock);
+      for (let j = 0; j < 4; j++) {   // shards jutting from each rock
+        const m = new THREE.MeshStandardMaterial({ color: glowHex, emissive: glowHex, emissiveIntensity: 3.2, roughness: 0.3, flatShading: true });
+        shardMats.push(m);
+        const shard = new THREE.Mesh(shardGeo, m);
+        const dir = new THREE.Vector3(rnd() - 0.5, rnd() * 0.7, rnd() - 0.5).normalize();
+        shard.position.copy(rock.position).addScaledVector(dir, rr * 0.85);
+        shard.scale.set(0.9 + rnd() * 1.2, 1.8 + rnd() * 2.6, 0.9 + rnd() * 1.2);
+        shard.lookAt(shard.position.clone().add(dir)); shard.rotateX(Math.PI / 2);
+        cluster.add(shard);
+        // additive halo sprite = the shard's glow aura (no bloom pass needed)
+        const sm = new THREE.SpriteMaterial({ map: haloTex, color: glowHex, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
+        shardSprites.push(sm);
+        const spr = new THREE.Sprite(sm);
+        spr.scale.setScalar(7 + rnd() * 5); spr.position.copy(shard.position).addScaledVector(dir, 1.2);
+        cluster.add(spr);
+      }
+    }
+    const light = new THREE.PointLight(glowHex, 4.5, 110, 1.5); light.position.set(0, 10, 0); cluster.add(light);
+    mineralPulse.push({ mats: shardMats, sprites: shardSprites, light, phase: frac * 7 });
+    const mt: MineTarget = { name: res === 'ore' ? 'Ore Field' : 'Crystal Field', resource: res, radius: 22, pos: () => cluster.position.clone() };
     mineTargets.push(mt); (cluster.userData as any).mine = mt;
     hoverMeshes.push({ mesh: cluster, html: `<div class="t-name">${mt.name}</div><div class="t-tags">${RESOURCE_LABEL[res]}</div>` });
   }
@@ -220,11 +261,11 @@ async function main() {
   await Promise.all(FACTIONS.map(async (def, i) => {
     let obj: THREE.Object3D;
     try {
-      const gltf = await loader.loadAsync(`${BASE}models/${def.id}.glb`);
+      const gltf = await loader.loadAsync(`${BASE}models/${def.model}.glb`);
       obj = gltf.scene;
-      // normalize size: scale longest bbox axis to ~24 units
+      // normalize size per CLASS: scouts are small, cruisers mid, harvesters bulky
       const box = new THREE.Box3().setFromObject(obj); const size = new THREE.Vector3(); box.getSize(size);
-      const s = 24 / Math.max(size.x, size.y, size.z); obj.scale.setScalar(s);
+      const s = CLASS_STATS[def.cls].size / Math.max(size.x, size.y, size.z); obj.scale.setScalar(s);
       // Shade hulls diffusely (like the planets) so the star's direction reads: tame
       // metalness and raise roughness (no environment map, so metal would read black).
       obj.traverse((o: any) => {
@@ -322,7 +363,7 @@ async function main() {
     fleetEl.innerHTML = '';
     ships.forEach((s, i) => {
       const b = document.createElement('div'); b.className = 'ship-btn' + (i === selected ? ' selected' : '');
-      b.innerHTML = `<div class="hq-badge" data-b="${i}" title="docked at HQ">HQ</div><img src="${BASE}sprites/${s.def.id}_y000.png" alt=""><div class="s-name">${s.def.name}</div><div class="s-stat" data-i="${i}">idle</div>`;
+      b.innerHTML = `<div class="hq-badge" data-b="${i}" title="docked at HQ">HQ</div><img src="${BASE}sprites/${s.def.model}_y000.png" alt=""><div class="s-name">${s.def.name}</div><div class="s-cls">${CLASS_STATS[s.def.cls].label}</div><div class="s-stat" data-i="${i}">idle</div>`;
       b.onclick = () => selectShip(i); fleetEl.appendChild(b);
     });
   }
@@ -330,7 +371,7 @@ async function main() {
     [...fleetEl.querySelectorAll('.s-stat')].forEach((el) => {
       const i = +(el as HTMLElement).dataset.i!; const s = ships[i]; if (!s) return;
       el.className = 's-stat ' + (s.state === 'mining' ? 'mining' : s.state === 'returning' ? 'returning' : s.state === 'moving' ? 'moving' : '');
-      el.textContent = s.state === 'mining' ? `mining ${Math.round(s.cargo)}%` : s.state;
+      el.textContent = s.state === 'mining' ? `mining ${Math.round(100 * s.cargo / (CARGO_CAP * perfOf(s).cargo))}%` : s.state;
     });
     [...fleetEl.querySelectorAll('.hq-badge')].forEach((el) => {
       const i = +(el as HTMLElement).dataset.b!; const s = ships[i];
@@ -546,6 +587,17 @@ async function main() {
 
     const pulse = 0.55 + 0.45 * Math.sin(T * 6);
     const destPulse = 1 + 0.28 * Math.sin(T * 3.2);   // destination ring breathes
+
+    // mineral fields shimmer: shard glow + field light breathe slowly
+    for (const mp of mineralPulse) {
+      const b = 0.8 + 0.3 * Math.sin(T * 1.7 + mp.phase);
+      for (let k = 0; k < mp.mats.length; k++) {
+        const tw = 0.5 + 0.5 * Math.sin(T * 2.3 + mp.phase + k * 1.7);   // per-shard twinkle
+        mp.mats[k].emissiveIntensity = (1.8 + 2.2 * tw) * b;
+        if (mp.sprites[k]) mp.sprites[k].opacity = (0.22 + 0.4 * tw) * b;
+      }
+      mp.light.intensity = 4.5 * b;
+    }
     for (let idx = 0; idx < ships.length; idx++) {
       const s = ships[idx];
       if (!s) continue;
@@ -573,8 +625,9 @@ async function main() {
       }
 
       if (s.state === 'mining' && s.mine) {
-        s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP, s.cargo + MINE_RATE * dt);
-        if (s.cargo >= CARGO_CAP) s.state = 'returning';
+        const p = perfOf(s);
+        s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP * p.cargo, s.cargo + MINE_RATE * p.mine * dt);
+        if (s.cargo >= CARGO_CAP * p.cargo) s.state = 'returning';
         drawBeam(s, s.mine.pos(), pulse);
       }
       if (s.state === 'idle' && s.mine && s.cargo === 0) s.state = 'moving';
@@ -584,7 +637,7 @@ async function main() {
 
       // exhaust plume + engine light follow the throttle (docked = pilot light only)
       {
-        const thr = s.docked ? 0 : s.speed / MAX_SPEED;
+        const thr = s.docked ? 0 : s.speed / (MAX_SPEED * perfOf(s).speed);
         const flick = 0.85 + 0.15 * Math.sin(T * 27 + idx * 3.1);
         const pu = s.plume.userData as any;
         s.plume.scale.set(0.55 + 0.55 * thr, 0.55 + 0.55 * thr, 0.22 + 1.5 * thr * flick);
@@ -647,32 +700,39 @@ const angWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 // Heading θ → forward = (sinθ, cosθ). The ship only moves along its nose (no sliding).
 // navStep advances ONE nav state by dt and returns whether it has arrived. The live
 // ship and the trajectory prediction both run this exact function → the drawn path is
-// the ship's real future motion.
-interface NavState { x: number; z: number; heading: number; speed: number; omega: number; }
+// the ship's real future motion. Performance (ms/acc/dec/mo/aa) lives IN the state so
+// each ship class flies — and predicts — with its own stats.
+interface NavState { x: number; z: number; heading: number; speed: number; omega: number; ms: number; acc: number; dec: number; mo: number; aa: number; }
 function navStep(st: NavState, T: Vec, arriveR: number, dt: number): boolean {
   const dx = T.x - st.x, dz = T.z - st.z;
   const dist = Math.hypot(dx, dz);
   const err = angWrap(Math.atan2(dx, dz) - st.heading);
-  const omegaDes = clamp(Math.sign(err) * Math.sqrt(2 * ANG_ACCEL * Math.abs(err)), -MAX_OMEGA, MAX_OMEGA);
-  st.omega += clamp(omegaDes - st.omega, -ANG_ACCEL * dt, ANG_ACCEL * dt);
+  const omegaDes = clamp(Math.sign(err) * Math.sqrt(2 * st.aa * Math.abs(err)), -st.mo, st.mo);
+  st.omega += clamp(omegaDes - st.omega, -st.aa * dt, st.aa * dt);
   st.heading = angWrap(st.heading + st.omega * dt);
   const face = Math.max(0, Math.cos(err));
-  const vDes = Math.min(MAX_SPEED, Math.sqrt(2 * DECEL * Math.max(0, dist - arriveR))) * face * face;
-  st.speed += clamp(vDes - st.speed, -DECEL * dt, ACCEL * dt);
+  const vDes = Math.min(st.ms, Math.sqrt(2 * st.dec * Math.max(0, dist - arriveR))) * face * face;
+  st.speed += clamp(vDes - st.speed, -st.dec * dt, st.acc * dt);
   st.x += Math.sin(st.heading) * st.speed * dt;
   st.z += Math.cos(st.heading) * st.speed * dt;
   return dist <= arriveR && st.speed < 5;
 }
-const navOf = (s: Ship): NavState => ({ x: s.pos.x, z: s.pos.z, heading: s.heading, speed: s.speed, omega: s.omega });
+const perfOf = (s: Ship) => CLASS_STATS[s.def.cls];
+const navOf = (s: Ship): NavState => {
+  const p = perfOf(s);
+  return { x: s.pos.x, z: s.pos.z, heading: s.heading, speed: s.speed, omega: s.omega,
+           ms: MAX_SPEED * p.speed, acc: ACCEL * p.accel, dec: DECEL * p.accel, mo: MAX_OMEGA * p.turn, aa: ANG_ACCEL * p.turn };
+};
 function applyNav(s: Ship, st: NavState) { s.pos.x = st.x; s.pos.z = st.z; s.heading = st.heading; s.speed = st.speed; s.omega = st.omega; }
 
 function steer(s: Ship, T: Vec, arriveR: number, dt: number): boolean {
   const st = navOf(s); const arrived = navStep(st, T, arriveR, dt); applyNav(s, st); return arrived;
 }
 function coast(s: Ship, dt: number) {   // no orders: ease ω and thrust to zero, glide to a stop
-  s.omega += clamp(-s.omega, -ANG_ACCEL * dt, ANG_ACCEL * dt);
+  const p = perfOf(s);
+  s.omega += clamp(-s.omega, -ANG_ACCEL * p.turn * dt, ANG_ACCEL * p.turn * dt);
   s.heading = angWrap(s.heading + s.omega * dt);
-  s.speed = Math.max(0, s.speed - DECEL * dt);
+  s.speed = Math.max(0, s.speed - DECEL * p.accel * dt);
   s.pos.x += Math.sin(s.heading) * s.speed * dt;
   s.pos.z += Math.cos(s.heading) * s.speed * dt;
 }

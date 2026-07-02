@@ -11,18 +11,33 @@ export const RESOURCE_LABEL: Record<ResourceTag, string> = {
   ore: 'ore', crystal: 'crystal', gas: 'gas',
 };
 
-export interface FactionDef { id: string; name: string; color: number; }
+export type ShipClass = 'scout' | 'cruiser' | 'harvester';
 
-// 8 factions = the player's starting fleet (one ship each) for the slice.
+// Per-class stat profile (multipliers on the base flight/cargo constants) + the
+// in-world model size. Scouts are quick and nimble but carry little; harvesters
+// lumber, haul and strip nodes faster; cruisers are the balanced flagships.
+export const CLASS_STATS: Record<ShipClass, {
+  label: string; speed: number; accel: number; turn: number; cargo: number; mine: number; size: number;
+}> = {
+  scout: { label: 'Scout', speed: 1.4, accel: 1.45, turn: 1.6, cargo: 0.45, mine: 0.7, size: 16 },
+  cruiser: { label: 'Cruiser', speed: 1.0, accel: 1.0, turn: 1.0, cargo: 1.0, mine: 1.0, size: 24 },
+  harvester: { label: 'Harvester', speed: 0.68, accel: 0.8, turn: 0.7, cargo: 2.4, mine: 1.9, size: 27 },
+};
+
+export interface FactionDef { id: string; name: string; color: number; cls: ShipClass; model: string; }
+
+// 8 factions = the player's starting fleet for the slice — a MIXED-CLASS fleet so the
+// class system shows: 3 scouts, 3 cruisers, 2 harvesters. `model` is the GLB id
+// (faction cruisers are `<id>`, variants `<id>-scout` / `<id>-harvester`).
 export const FACTIONS: FactionDef[] = [
-  { id: 'consortium-galactica', name: 'Meridian', color: 0xe8edf2 },
-  { id: 'kareth-nara', name: 'Spirewing', color: 0x7dffc4 },
-  { id: 'terra-nexum', name: 'Ironside', color: 0xff8a3c },
-  { id: 'illumaria', name: 'Cipher', color: 0xd24bff },
-  { id: 'astryn-vel', name: 'Freehold', color: 0x9be84a },
-  { id: 'ezrathi', name: 'Threnody', color: 0x8cff6b },
-  { id: 'krithul', name: 'Rotmaw', color: 0xc6ff3a },
-  { id: 'shadur-kai', name: 'Nightglass', color: 0x37e6ff },
+  { id: 'consortium-galactica', name: 'Meridian', color: 0xe8edf2, cls: 'cruiser', model: 'consortium-galactica' },
+  { id: 'kareth-nara', name: 'Spirewing', color: 0x7dffc4, cls: 'scout', model: 'kareth-nara-scout' },
+  { id: 'terra-nexum', name: 'Ironside', color: 0xff8a3c, cls: 'harvester', model: 'terra-nexum-harvester' },
+  { id: 'illumaria', name: 'Cipher', color: 0xd24bff, cls: 'scout', model: 'illumaria-scout' },
+  { id: 'astryn-vel', name: 'Freehold', color: 0x9be84a, cls: 'cruiser', model: 'astryn-vel' },
+  { id: 'ezrathi', name: 'Threnody', color: 0x8cff6b, cls: 'cruiser', model: 'ezrathi' },
+  { id: 'krithul', name: 'Rotmaw', color: 0xc6ff3a, cls: 'harvester', model: 'krithul-harvester' },
+  { id: 'shadur-kai', name: 'Nightglass', color: 0x37e6ff, cls: 'scout', model: 'shadur-kai-scout' },
 ];
 
 export interface MoonDef {

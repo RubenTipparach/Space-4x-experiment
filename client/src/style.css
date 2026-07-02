@@ -53,6 +53,7 @@ canvas { display: block; }
 .ship-btn img { width: 52px; height: 52px; object-fit: contain; display: block; margin: 0 auto; }
 .ship-btn .s-name { font-size: 10.5px; color: #eaf1fb; margin-top: 1px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ship-btn .s-cls { font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; color: #6f87a8; }
 .ship-btn .s-stat { font-size: 9.5px; color: var(--muted); }
 .ship-btn .s-stat.mining { color: #8cff9e; }
 .ship-btn .s-stat.returning { color: #ffd27a; }
