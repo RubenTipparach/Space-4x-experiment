@@ -273,6 +273,22 @@ def missile_rack(loc, rows, cols, mat, r=0.026):
     return out
 
 
+def arm_pair(hw, y, mat, claw_mat, z=0.0, s=1.0):
+    """Two segmented ROBOTIC MINING ARMS (mirrored) reaching out past the bow:
+    shoulder mount → upper arm angled outboard → elbow joint → forearm swinging back
+    in → two-finger open claw. The working-machine signature of every harvester."""
+    def one(sx):
+        return [
+            box((0.10 * s, 0.12 * s, 0.10 * s), (sx * hw, y, z), (0, 0, 0), mat, bevel=0.02),                          # shoulder
+            box((0.05 * s, 0.36 * s, 0.055 * s), (sx * (hw + 0.14 * s), y + 0.30 * s, z), (0, 0, sx * -0.42), mat, bevel=0.015),  # upper arm
+            box((0.075 * s, 0.075 * s, 0.075 * s), (sx * (hw + 0.28 * s), y + 0.60 * s, z), (0, 0, 0), claw_mat, bevel=0.02),     # elbow
+            box((0.045 * s, 0.38 * s, 0.05 * s), (sx * (hw + 0.18 * s), y + 0.94 * s, z), (0, 0, sx * 0.30), mat, bevel=0.015),   # forearm
+            box((0.035 * s, 0.17 * s, 0.04 * s), (sx * (hw + 0.04 * s), y + 1.26 * s, z), (0, 0, sx * 0.5), claw_mat, bevel=0.01),   # finger (inner)
+            box((0.035 * s, 0.17 * s, 0.04 * s), (sx * (hw + 0.16 * s), y + 1.28 * s, z), (0, 0, sx * -0.45), claw_mat, bevel=0.01), # finger (outer)
+        ]
+    return pair(one)
+
+
 def window_strip(y0, y1, x, z, glow, n=8, size=0.028):
     """Mirrored rows of tiny emissive windows along the flanks (lights, not paint)."""
     out = []
@@ -357,12 +373,28 @@ def consortium(cls="cruiser"):
                                   (0.95, 0.62, 0.30, 1.48, 0.03)], white, "X", 0.045, False, "hammer")]
         o += pair(lambda sx: [prism(6, 0.12, 0.6, (sx * 1.0, 1.48, 0.03), (math.radians(90), 0, 0), steel, bevel=0.02),
                               disc(0.08, 0.04, (sx * 1.0, 1.80, 0.03), blue)])
-        o += [cone(0.15, 0.75, (0, 2.0, -0.16), (math.radians(-90), 0, 0), steel)]      # chin drill
-        o += [torus(0.16, 0.02, (0, 1.72, -0.16), gold, rot=(math.radians(90), 0, 0))]
+        o += arm_pair(0.42, 1.55, panel, steel, z=-0.08, s=1.0)                         # robotic mining arms
         o += pair(lambda sx: [prism(8, 0.24, 1.05, (sx * 0.56, -0.35, 0.32), (math.radians(90), 0, 0), panel, bevel=0.03),
                               disc(0.15, 0.04, (sx * 0.56, 0.20, 0.32), win)])          # ore silos
         o += window_strip(0.6, -1.0, 0.55, 0.12, win, n=5)
         o += pair(lambda sx: nozzle((sx * 0.30, -2.05, 0.0), 0.17, steel, blue, length=0.55))
+        return o
+    if cls == "freighter":   # container liner: mini-hammer tug hauling ONE giant pod
+        o += [loft_hull(xs_keel(1.0, -0.5, 0.2, 1.0), smooth_stations([
+            (2.3, 0.10, 0.10, 0.02), (1.8, 0.28, 0.26, 0.03), (1.2, 0.30, 0.28, 0.0)], 3), white, bevel=0.045)]
+        o += [loft_axis(XS_FOIL, [(-0.8, 0.55, 0.24, 2.0, 0.03), (0.0, 0.5, 0.22, 2.08, 0.04),
+                                  (0.8, 0.55, 0.24, 2.0, 0.03)], white, "X", 0.04, False, "hammer")]
+        o += pair(lambda sx: disc(0.07, 0.04, (sx * 0.82, 2.3, 0.03), blue))
+        # THE CONTAINER: one giant rounded cargo pod, wider than the tug itself
+        o += [box((0.60, 1.30, 0.52), (0, -0.2, 0.10), (0, 0, 0), white, bevel=0.10)]
+        o += [box((0.63, 0.07, 0.55), (0, 0.35, 0.10), (0, 0, 0), gold, bevel=0.02)]    # gold straps
+        o += [box((0.63, 0.07, 0.55), (0, -0.75, 0.10), (0, 0, 0), gold, bevel=0.02)]
+        o += window_strip(0.15, -0.55, 0.62, 0.30, win, n=4)
+        o += pair(lambda sx: box((0.06, 0.5, 0.10), (sx * 0.30, 1.05, 0.05), (0, 0, sx * 0.25), panel, bevel=0.02))  # clamp yokes
+        o += [loft_hull(xs_slab(1.0, 0.6), smooth_stations([
+            (-1.05, 0.42, 0.30, 0.0), (-1.55, 0.58, 0.38, 0.0), (-2.0, 0.48, 0.32, 0.0)], 3), white, bevel=0.05)]
+        for dx in (-0.34, 0.0, 0.34):
+            o += nozzle((dx, -2.12, 0.0), 0.15, steel, blue, length=0.5)
         return o
     # waist spine (slim — the proportion contrast against hammer + stern sells the ship)
     spine = smooth_stations([(1.9, 0.16, 0.16, 0.02), (1.0, 0.32, 0.34, 0.04),
@@ -423,13 +455,28 @@ def kareth(cls="cruiser"):
                                 (-1.0, 0.42, 0.36, 0.0), (-1.7, 0.14, 0.14, -0.03)], 4)
         o += [loft_hull(xs_round(0.85, 0.8), body, green, bevel=0.07, smooth=True)]
         o += wing_pair((0.35, 0.15, 0.04), 0.95, 0.80, 0.20, 0.13, 0.75, 0.10, green, curve=1.6)
-        o += pair(lambda sx: [cone(0.16, 0.5, (sx * 0.34, 1.5, -0.08), (math.radians(90), 0, 0), jade, r2=0.05),
-                              disc(0.10, 0.04, (sx * 0.34, 1.76, -0.08), glow)])   # collector scoops
+        o += arm_pair(0.36, 1.15, jade, green, z=-0.06, s=0.95)                    # robotic gathering arms
         for y in (0.5, -0.1, -0.7):
             o += pair(lambda sx, y=y: sphere((sx * 0.52, y, 0.18), (0.09, 0.12, 0.09), glow))   # sap sacs
         o += [box((0.028, 1.5, 0.024), (0, 0.0, 0.44), (0, 0, 0), glow, bevel=0)]
         o += pair(lambda sx: [cyl(0.11, 0.8, (sx * 0.30, -1.15, -0.22), (math.radians(90), 0, 0), jade, smooth=True, bevel=0.03),
                               disc(0.08, 0.04, (sx * 0.30, -1.56, -0.22), glow)])
+        return o
+    if cls == "freighter":   # seed carrier: small bird hauling ONE giant glowing seed pod
+        o += [loft_hull(xs_round(0.85, 0.75), smooth_stations([
+            (2.3, 0.06, 0.06, 0.0), (1.7, 0.26, 0.24, 0.04), (1.1, 0.28, 0.26, 0.02)], 3), green, bevel=0.05, smooth=True)]
+        o += pair(lambda sx: cyl(0.012, 0.7, (sx * 0.18, 2.3, 0.10), (math.radians(72), 0, sx * -0.55), jade, bevel=0))
+        o += wing_pair((0.24, 1.35, 0.02), 0.85, 0.55, 0.12, 0.09, 0.65, 0.12, green, curve=1.8)
+        # THE POD: one giant seed slung beneath, held by vine straps
+        o += [prism(12, 0.50, 2.1, (0, -0.35, -0.10), (math.radians(90), 0, 0), jade, smooth=True, bevel=0.05)]
+        o += [cone(0.30, 0.55, (0, 0.95, -0.10), (math.radians(-90), 0, 0), jade, r2=0.5)]     # pod nose taper
+        o += [cone(0.30, 0.55, (0, -1.65, -0.10), (math.radians(90), 0, 0), jade, r2=0.5)]     # pod tail taper
+        o += [box((0.028, 1.7, 0.026), (0, -0.35, 0.42), (0, 0, 0), glow, bevel=0)]            # glow vein on pod
+        for y in (0.35, -0.35, -1.05):
+            o += [torus(0.53, 0.022, (0, y, -0.10), green, rot=(math.radians(90), 0, 0))]      # vine straps
+        o += pair(lambda sx: sphere((sx * 0.36, -0.9, 0.28), (0.06, 0.08, 0.06), glow))
+        o += pair(lambda sx: [cyl(0.10, 0.75, (sx * 0.30, -2.0, 0.12), (math.radians(90), 0, 0), jade, smooth=True, bevel=0.03),
+                              disc(0.075, 0.04, (sx * 0.30, -2.38, 0.12), glow)])
         return o
     body = smooth_stations([(2.0, 0.06, 0.06, 0.0), (1.2, 0.30, 0.28, 0.05), (0.2, 0.42, 0.36, 0.05),
                             (-0.8, 0.32, 0.28, 0.0), (-1.7, 0.12, 0.12, -0.03)], 4)
@@ -484,9 +531,7 @@ def terra(cls="cruiser"):
         o += [loft_hull(xs_slab(1.0, 0.6), cab, rust, bevel=0.06)]
         o += [box((0.30, 0.05, 0.055), (0, 1.9, 0.16), (0, 0, 0), win, bevel=0)]
         o += pair(lambda sx: box((0.07, 0.09, 0.07), (sx * 0.36, 1.78, 0.24), (0, 0, 0), win, bevel=0.02))   # floodlights
-        o += pair(lambda sx: box((0.08, 0.55, 0.10), (sx * 0.42, 2.25, -0.14), (0, 0, sx * 0.28), steel, bevel=0.025))  # scoop arms
-        o += [cone(0.16, 0.6, (0, 2.45, -0.10), (math.radians(-90), 0, 0), steel)]                            # drill
-        o += [torus(0.17, 0.02, (0, 2.2, -0.10), glow, rot=(math.radians(90), 0, 0))]
+        o += arm_pair(0.44, 1.85, steel, dark, z=-0.10, s=1.15)                                               # robotic mining arms
         o += truss(1.05, -1.0, 0.26, 0.22, steel, bays=3)
         o += pair(lambda sx: [prism(6, 0.30, 1.5, (sx * 0.52, 0.0, 0.02), (math.radians(90), 0, 0), tan, bevel=0.04),
                               disc(0.18, 0.04, (sx * 0.52, 0.78, 0.02), glow)])                               # ore hoppers
@@ -494,6 +539,24 @@ def terra(cls="cruiser"):
         o += [loft_hull(xs_slab(1.0, 0.6), blk, rust, bevel=0.06)]
         o += pair(lambda sx: nozzle((sx * 0.32, -2.15, 0.0), 0.19, dark, glow, length=0.6))
         o += greeble_strip(rng, -1.2, -1.9, -0.68, 0.14, dark, n=4, s=0.08)
+        return o
+    if cls == "freighter":   # long-haul rig: cab + ONE colossal corrugated container
+        cab = smooth_stations([(2.5, 0.24, 0.22, 0.0), (2.1, 0.48, 0.40, 0.02), (1.55, 0.52, 0.44, 0.0)], 3)
+        o += [loft_hull(xs_slab(1.0, 0.6), cab, rust, bevel=0.06)]
+        o += [box((0.30, 0.05, 0.055), (0, 2.4, 0.16), (0, 0, 0), win, bevel=0)]
+        o += antenna((0.14, 1.85, 0.44), 0.30, steel)
+        o += truss(1.55, 1.0, 0.24, 0.20, steel, bays=1)
+        # THE CONTAINER: one huge corrugated box, ribbed, clamped at the corners
+        o += [box((0.62, 1.30, 0.55), (0, -0.35, 0.06), (0, 0, 0), tan, bevel=0.05)]
+        for k in range(5):
+            o += [box((0.65, 0.05, 0.57), (0, 0.55 - k * 0.45, 0.06), (0, 0, 0), rust, bevel=0.012)]   # corrugation ribs
+        o += pair(lambda sx: box((0.05, 1.34, 0.06), (sx * 0.64, -0.35, 0.42), (0, 0, 0), steel, bevel=0.015))  # clamp rails
+        o += pair(lambda sx: box((0.05, 1.34, 0.06), (sx * 0.64, -0.35, -0.30), (0, 0, 0), steel, bevel=0.015))
+        o += [box((0.20, 0.10, 0.10), (0, 0.42, 0.55), (0, 0, 0), glow, bevel=0.02)]   # hazard beacon
+        blk = smooth_stations([(-1.15, 0.50, 0.38, 0.0), (-1.7, 0.72, 0.50, 0.0), (-2.3, 0.60, 0.44, 0.0)], 3)
+        o += [loft_hull(xs_slab(1.0, 0.6), blk, rust, bevel=0.06)]
+        o += pair(lambda sx: nozzle((sx * 0.34, -2.45, 0.0), 0.20, dark, glow, length=0.65))
+        o += pair(lambda sx: cyl(0.14, 0.9, (sx * 0.44, -1.75, -0.42), (math.radians(90), 0, 0), steel, smooth=True, bevel=0.03))
         return o
     # tug cab up front
     cab = smooth_stations([(2.3, 0.22, 0.20, 0.0), (1.9, 0.46, 0.38, 0.02), (1.3, 0.50, 0.42, 0.0)], 3)
@@ -555,11 +618,25 @@ def illumaria(cls="cruiser"):
         o += [loft_hull(xs_diamond(), smooth_stations([
             (1.2, 0.05, 0.05, 0.10), (0.6, 0.15, 0.12, 0.14), (-0.2, 0.12, 0.10, 0.12), (-0.7, 0.06, 0.05, 0.09)], 3),
             trim, bevel=0.03)]
-        for dx in (-0.5, 0.0, 0.5):
-            o += [disc(0.07, 0.04, (dx, 0.95, 0.02), glow)]   # forward tractor emitters
+        o += arm_pair(0.40, 0.95, trim, darkm, z=0.04, s=0.95)                          # robotic salvage arms
         o += pair(lambda sx: box((0.16, 0.5, 0.14), (sx * 0.80, -0.3, 0.22), (0, 0, 0), trim, bevel=0.04))  # catch blisters
         o += pair(lambda sx: box((0.02, 0.6, 0.022), (sx * 0.60, 0.3, 0.12), (0, 0, sx * -0.12), glow, bevel=0))
         o += pair(lambda sx: box((0.12, 0.05, 0.034), (sx * 0.86, -1.58, -0.02), (0, 0, 0), glow, bevel=0))
+        return o
+    if cls == "freighter":   # blockade runner: twin hulls hauling ONE faceted monolith
+        o += pair(lambda sx: loft_axis(xs_lens(0.55, 0.34), smooth_stations([
+            (2.0, 0.07, 0.06, sx * 0.66, 0.0), (1.0, 0.30, 0.24, sx * 0.72, 0.02),
+            (0.0, 0.38, 0.28, sx * 0.78, 0.03), (-1.0, 0.32, 0.24, sx * 0.82, 0.0),
+            (-1.7, 0.12, 0.11, sx * 0.85, -0.02)], 4), darkm, "Y", 0.035, False, "cat"))
+        # THE MONOLITH: one giant faceted cargo cell slung between the hulls
+        o += [prism(6, 0.48, 2.0, (0, -0.1, 0.02), (math.radians(90), 0, 0), darkm, bevel=0.06)]
+        o += [box((0.99, 0.05, 0.03), (0, 0.45, 0.02), (0, 0, 0), glow, bevel=0)]      # magenta seam slits
+        o += [box((0.99, 0.05, 0.03), (0, -0.65, 0.02), (0, 0, 0), glow, bevel=0)]
+        o += [box((0.04, 1.8, 0.026), (0, -0.1, 0.44), (0, 0, 0), glow, bevel=0)]
+        o += pair(lambda sx: box((0.30, 0.10, 0.05), (sx * 0.55, 0.75, 0.10), (0, 0, sx * -0.2), trim, bevel=0.02))   # clamp wings
+        o += pair(lambda sx: box((0.30, 0.10, 0.05), (sx * 0.55, -0.95, 0.10), (0, 0, sx * 0.2), trim, bevel=0.02))
+        o += pair(lambda sx: fin((sx * 0.82, -1.15, 0.08), 0.34, 0.32, 0.12, 0.04, 0.22, trim))
+        o += pair(lambda sx: box((0.11, 0.05, 0.032), (sx * 0.82, -1.78, -0.02), (0, 0, 0), glow, bevel=0))
         return o
     # twin dagger hulls, toed slightly outward toward the stern
     hull_xs = xs_lens(0.55, 0.34)
@@ -613,15 +690,30 @@ def astryn(cls="cruiser"):
         body = smooth_stations([(1.7, 0.12, 0.12, 0.0), (0.9, 0.44, 0.40, 0.03), (0.0, 0.56, 0.48, 0.02),
                                 (-0.9, 0.42, 0.36, -0.01), (-1.4, 0.26, 0.22, -0.02)], 4)
         o += [loft_hull(xs_keel(0.95, -0.5, 0.2, 1.0), body, olive, bevel=0.05)]
-        o += [cone(0.20, 0.8, (0, 2.05, -0.02), (math.radians(-90), 0, 0), steel)]     # auger drill
-        for y in (1.72, 1.55, 1.38):
-            o += [torus(0.13 + (1.72 - y) * 0.16, 0.018, (0, y, -0.02), darkm, rot=(math.radians(90), 0, 0))]
+        o += arm_pair(0.42, 1.35, steel, darkm, z=-0.04, s=1.05)                       # robotic mining arms
         o += pair(lambda sx: [cyl(0.22, 1.1, (sx * 0.62, -0.15, 0.02), (math.radians(90), 0, 0), darkm, smooth=True, bevel=0.03),
                               disc(0.13, 0.04, (sx * 0.62, 0.42, 0.02), glow)])        # ore drums
         o += pair(lambda sx: box((0.07, 0.09, 0.07), (sx * 0.30, 1.15, 0.28), (0, 0, 0), glow, bevel=0.02))  # floodlights
         o += turret((0, 0.35, 0.44), steel, steel, r=0.09, length=0.4)
         o += [offside(box((0.13, 0.30, 0.13), (-0.44, -0.6, 0.28), (0, 0, 0.1), darkm, bevel=0.04))]
         o += pair(lambda sx: nozzle((sx * 0.22, -1.55, 0.0), 0.14, darkm, glow, length=0.45))
+        return o
+    if cls == "freighter":   # junk trader: small tug lashed around ONE mega-crate
+        body = smooth_stations([(2.2, 0.10, 0.10, 0.0), (1.6, 0.36, 0.32, 0.03), (1.0, 0.40, 0.36, 0.02)], 3)
+        o += [loft_hull(xs_keel(0.95, -0.5, 0.2, 1.0), body, olive, bevel=0.05)]
+        o += [box((0.09, 0.18, 0.045), (0, 1.75, 0.30), (0, 0, 0), glow, bevel=0.02)]
+        # THE CRATE: one huge mismatched cargo block, strapped and overloaded
+        o += [box((0.58, 1.25, 0.48), (0, -0.25, 0.05), (0, 0, 0), darkm, bevel=0.05)]
+        o += [box((0.42, 0.85, 0.18), (0, -0.15, 0.60), (0, 0, 0.04), orange, bevel=0.04)]   # overflow stack on top
+        for y in (0.25, -0.35, -0.85):
+            o += [box((0.62, 0.055, 0.52), (0, y, 0.05), (0, 0, 0), steel, bevel=0.012)]     # lash straps
+        o += [offside(cyl(0.14, 0.55, (0.55, -0.7, 0.42), (0, 0, 0.3), steel, smooth=True, bevel=0.02))]  # strapped barrel (+x)
+        o += [offside(box((0.12, 0.28, 0.12), (-0.52, 0.15, 0.44), (0, 0, -0.15), darkm, bevel=0.03))]     # crate (-x)
+        o += pair(lambda sx: loft_axis(xs_round(1.0, 1.0), smooth_stations([
+            (-0.9, 0.09, 0.10, sx * 0.52, 0.0), (-1.6, 0.075, 0.085, sx * 0.55, 0.0), (-2.1, 0.04, 0.045, sx * 0.55, 0.04)], 3),
+            olive, "Y", 0.03, True, "boom"))
+        o += [box((0.60, 0.14, 0.028), (0, -2.0, 0.12), (0, 0, 0), olive, bevel=0.03)]
+        o += pair(lambda sx: nozzle((sx * 0.24, -1.6, -0.05), 0.15, darkm, glow, length=0.5))
         return o
     # stubby fuselage
     body = smooth_stations([(1.9, 0.10, 0.10, 0.0), (1.1, 0.40, 0.36, 0.03), (0.1, 0.52, 0.44, 0.02),
@@ -685,9 +777,29 @@ def ezrathi(cls="cruiser"):
         o += [fin((0, -0.2, -0.62), -0.45, 0.5, 0.12, 0.05, 0.22, obs)]
         o += [prism(8, 0.14, 0.5, (0, 0.9, -0.35), (math.radians(90), 0, 0), violet, bevel=0.02)]
         o += [disc(0.09, 0.04, (0, 1.17, -0.35), glow)]         # extraction beam emitter
+        o += arm_pair(0.42, 1.0, violet, obs, z=-0.05, s=1.0)   # robotic reliquary arms
         o += [torus(0.60, 0.024, (0, -1.0, 0.08), vglow, rot=(math.radians(90), 0, 0))]
         o += [torus(0.40, 0.02, (0, -1.4, 0.06), vglow, rot=(math.radians(90), 0, 0))]
         o += pair(lambda sx: box((0.09, 0.05, 0.14), (sx * 0.20, -1.75, 0.0), (0, 0, 0), vglow, bevel=0))
+        return o
+    if cls == "freighter":   # funeral barge: blade tug bearing ONE giant rune sarcophagus
+        o += [loft_hull(xs_tall(0.55, 1.0), smooth_stations([
+            (2.2, 0.06, 0.12, 0.0), (1.6, 0.30, 0.55, 0.0), (1.0, 0.34, 0.60, 0.0)], 3), obs, bevel=0.03)]
+        o += [cyl(0.03, 0.8, (0, 2.6, 0.12), (math.radians(90), 0, 0), violet, smooth=True, bevel=0)]
+        o += [cone(0.045, 0.3, (0, 3.05, 0.12), (math.radians(-90), 0, 0), obs)]
+        # THE SARCOPHAGUS: one giant obsidian cargo casket, ribbed, rune-lit, haloed
+        o += [box((0.10, 1.85, 0.10), (0, -0.2, -0.02), (0, 0, 0), obs, bevel=0.02)]       # carrying spine
+        o += [box((0.50, 1.35, 0.58), (0, -0.25, 0.05), (0, 0, 0), obs, bevel=0.06)]
+        for y in (0.35, -0.25, -0.85):
+            o += [box((0.54, 0.06, 0.62), (0, y, 0.05), (0, 0, 0), violet, bevel=0.015)]   # frame ribs
+        o += [box((0.03, 1.2, 0.03), (0, -0.25, 0.65), (0, 0, 0), glow, bevel=0)]          # rune seam
+        o += pair(lambda sx: box((0.025, 1.2, 0.025), (sx * 0.52, -0.25, 0.30), (0, 0, 0), vglow, bevel=0))
+        o += [torus(0.72, 0.026, (0, -0.25, 0.05), vglow, rot=(math.radians(90), 0, 0))]   # halo around the casket
+        o += [fin((0, 1.2, 0.62), 0.4, 0.3, 0.07, 0.05, 0.18, obs)]
+        o += [fin((0, -1.4, -0.5), -0.35, 0.4, 0.10, 0.05, 0.18, obs)]
+        o += [loft_hull(xs_tall(0.55, 1.0), smooth_stations([
+            (-1.15, 0.30, 0.50, 0.0), (-1.7, 0.34, 0.55, 0.0), (-2.3, 0.14, 0.22, -0.02)], 3), obs, bevel=0.03)]
+        o += pair(lambda sx: box((0.09, 0.05, 0.15), (sx * 0.18, -2.4, 0.0), (0, 0, 0), vglow, bevel=0))
         return o
     hull_sts = smooth_stations([(2.0, 0.07, 0.14, 0.0), (1.2, 0.38, 0.70, 0.0), (0.2, 0.58, 1.02, 0.0),
                                 (-0.8, 0.48, 0.82, 0.0), (-1.6, 0.26, 0.45, 0.0), (-2.1, 0.09, 0.16, -0.02)], 4)
@@ -746,7 +858,7 @@ def krithul(cls="cruiser"):
             o += [plate_band(body_xs, body_sts, y0, y1, gr, chitin, bevel=0.05)]
         o += [cone(0.34, 0.5, (0, 1.55, -0.02), (math.radians(-90), 0, 0), darkm, r2=0.10)]   # gaping maw
         o += [disc(0.20, 0.05, (0, 1.52, -0.02), glow)]
-        o += pair(lambda sx: box((0.07, 0.30, 0.09), (sx * 0.34, 1.55, -0.10), (0, 0, sx * -0.55), darkm, bevel=0.03))
+        o += arm_pair(0.40, 1.35, chitin, darkm, z=-0.06, s=1.05)                             # robotic feeder arms
         for y in (0.72, 0.15, -0.5):
             o += pair(lambda sx, y=y: sphere((sx * 0.42, y, 0.34), (0.09, 0.11, 0.09), glow))  # stomach sacs
         for i in range(4):
@@ -754,6 +866,27 @@ def krithul(cls="cruiser"):
             o += pair(lambda sx, y=y: cone(0.035, 0.4, (sx * 0.45, y, -0.5), (math.radians(-25), 0, sx * -0.9), darkm))
         o += [cone(0.06, 0.7, (0, -1.9, -0.02), (math.radians(90), 0, 0), chitin)]
         o += [disc(0.15, 0.05, (0, -1.5, -0.10), glow)]
+        return o
+    if cls == "freighter":   # brood carrier: small head dragging ONE swollen egg sac
+        head_sts = smooth_stations([(2.2, 0.10, 0.10, 0.0), (1.7, 0.34, 0.32, 0.02), (1.2, 0.36, 0.34, 0.0)], 3)
+        o += [loft_hull(xs_round(0.78, 0.85), head_sts, flesh, bevel=0.08, smooth=True)]
+        o += [plate_band(xs_round(0.78, 0.85), head_sts, 1.95, 1.45, 1.08, chitin, bevel=0.045)]
+        o += [disc(0.07, 0.04, (0, 2.25, -0.02), glow)]
+        # THE EGG SAC: one giant translucent-looking brood pod, strapped in chitin
+        o += [prism(12, 0.55, 1.9, (0, -0.35, 0.0), (math.radians(90), 0, 0), flesh, smooth=True, bevel=0.06)]
+        o += [cone(0.35, 0.5, (0, 0.85, 0.0), (math.radians(-90), 0, 0), flesh, r2=0.55)]
+        o += [cone(0.35, 0.5, (0, -1.55, 0.0), (math.radians(90), 0, 0), flesh, r2=0.55)]
+        for y in (0.3, -0.35, -1.0):
+            o += [torus(0.58, 0.035, (0, y, 0.0), chitin, rot=(math.radians(90), 0, 0))]   # chitin straps
+        # glowing brood boils: mirrored pairs + one centered crown (all rule-clean)
+        o += pair(lambda sx: sphere((sx * 0.32, 0.05, 0.38), (0.09, 0.11, 0.09), glow))
+        o += pair(lambda sx: sphere((sx * 0.26, -0.75, 0.42), (0.07, 0.09, 0.07), glow))
+        o += [sphere((0, -0.35, 0.54), (0.10, 0.12, 0.10), glow)]
+        for i in range(3):
+            y = 1.6 - i * 0.35
+            o += pair(lambda sx, y=y: cone(0.03, 0.32, (sx * 0.30, y, -0.35), (math.radians(-25), 0, sx * -0.9), darkm))
+        o += [cone(0.05, 0.6, (0, -2.5, 0.0), (math.radians(90), 0, 0), chitin)]
+        o += [disc(0.13, 0.05, (0, -2.15, -0.06), glow)]
         return o
     body_sts = smooth_stations([(1.7, 0.16, 0.15, 0.0), (0.9, 0.52, 0.50, 0.04), (0.0, 0.68, 0.66, 0.02),
                                 (-0.9, 0.54, 0.52, 0.0), (-1.7, 0.26, 0.24, -0.03), (-2.0, 0.10, 0.10, -0.05)], 4)
@@ -808,6 +941,7 @@ def shadur(cls="cruiser"):
                                 (-0.7, 0.38, 0.46, 0.0), (-1.6, 0.16, 0.20, 0.0), (-2.0, 0.06, 0.08, 0.0)], 4)
         o += [loft_hull(xs_diamond(), body, darkm, bevel=0.03)]
         o += wing_pair((0.30, -0.20, 0.12), 1.0, 0.75, 0.20, 0.11, 0.70, -0.45, darkm, curve=1.3)
+        o += arm_pair(0.34, 1.45, trim, darkm, z=-0.02, s=0.95)                                               # robotic talon arms
         o += pair(lambda sx: box((0.16, 0.55, 0.14), (sx * 0.34, -0.9, 0.22), (0, 0, 0), trim, bevel=0.04))   # ore panniers
         o += pair(lambda sx: box((0.02, 0.4, 0.02), (sx * 0.44, -0.9, 0.30), (0, 0, 0), glow, bevel=0))
         for dy in (0.35, -0.05, 0.15):
@@ -815,6 +949,22 @@ def shadur(cls="cruiser"):
         o += [box((0.05, 0.65, 0.024), (0, 0.35, -0.34), (0, 0, 0), glow, bevel=0)]   # ventral tractor slit
         o += [fin((0, -1.7, 0.24), 0.55, 0.45, 0.14, 0.06, 0.40, darkm)]
         o += pair(lambda sx: box((0.12, 0.05, 0.026), (sx * 0.16, -2.1, 0.0), (0, 0, 0), glow, bevel=0))
+        return o
+    if cls == "freighter":   # night courier: raptor gripping ONE sealed stealth cell
+        body = smooth_stations([(2.3, 0.05, 0.08, 0.10), (1.4, 0.24, 0.32, 0.16), (0.4, 0.34, 0.42, 0.18),
+                                (-0.7, 0.28, 0.36, 0.16), (-1.7, 0.13, 0.18, 0.12), (-2.2, 0.05, 0.07, 0.10)], 4)
+        o += [loft_hull(xs_diamond(), body, darkm, bevel=0.03)]
+        o += wing_pair((0.26, -0.15, 0.24), 0.85, 0.60, 0.18, 0.10, 0.55, -0.35, darkm, curve=1.3)
+        # THE CELL: one giant sealed cargo cell clutched under the belly
+        o += [box((0.50, 1.45, 0.42), (0, -0.15, -0.34), (0, 0, 0), darkm, bevel=0.07)]
+        o += [box((0.52, 0.05, 0.44), (0, 0.35, -0.34), (0, 0, 0), trim, bevel=0.012)]     # seal bands
+        o += [box((0.52, 0.05, 0.44), (0, -0.65, -0.34), (0, 0, 0), trim, bevel=0.012)]
+        o += [box((0.03, 1.3, 0.024), (0, -0.15, -0.56), (0, 0, 0), glow, bevel=0)]        # cyan keel seam
+        o += pair(lambda sx: cone(0.04, 0.4, (sx * 0.30, 0.55, -0.30), (math.radians(-105), 0, sx * 0.4), trim))   # grip talons
+        o += pair(lambda sx: cone(0.04, 0.4, (sx * 0.30, -0.85, -0.30), (math.radians(-75), 0, sx * 0.4), trim))
+        o += [fin((0, -1.85, 0.30), 0.60, 0.45, 0.14, 0.06, 0.40, darkm)]
+        o += [box((0.022, 1.0, 0.02), (0, 0.2, 0.60), (0, 0, 0), glow, bevel=0)]
+        o += pair(lambda sx: box((0.12, 0.05, 0.026), (sx * 0.15, -2.3, 0.10), (0, 0, 0), glow, bevel=0))
         return o
     body = smooth_stations([(2.5, 0.05, 0.08, 0.0), (1.4, 0.26, 0.36, 0.0), (0.3, 0.40, 0.52, 0.0),
                             (-0.8, 0.34, 0.44, 0.0), (-1.8, 0.18, 0.24, 0.0), (-2.3, 0.07, 0.09, 0.0)], 4)
@@ -847,13 +997,13 @@ _FACTIONS = {
     "krithul": krithul,
     "shadur-kai": shadur,
 }
-# Each faction id builds its cruiser; "<id>-scout" / "<id>-harvester" build the class
-# variants (same signature structure + palette, different proportions and kit).
+# Each faction id builds its cruiser; "<id>-scout" / "<id>-harvester" / "<id>-freighter"
+# build the class variants (same signature structure + palette, different kit).
 BUILDERS = {}
 for _fid, _fn in _FACTIONS.items():
     BUILDERS[_fid] = _fn
-    BUILDERS[f"{_fid}-scout"] = (lambda f: (lambda: f("scout")))(_fn)
-    BUILDERS[f"{_fid}-harvester"] = (lambda f: (lambda: f("harvester")))(_fn)
+    for _cls in ("scout", "harvester", "freighter"):
+        BUILDERS[f"{_fid}-{_cls}"] = (lambda f, c: (lambda: f(c)))(_fn, _cls)
 
 
 # ---------------- scene / render ----------------

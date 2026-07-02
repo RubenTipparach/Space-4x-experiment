@@ -11,7 +11,7 @@ export const RESOURCE_LABEL: Record<ResourceTag, string> = {
   ore: 'ore', crystal: 'crystal', gas: 'gas',
 };
 
-export type ShipClass = 'scout' | 'cruiser' | 'harvester';
+export type ShipClass = 'scout' | 'cruiser' | 'harvester' | 'freighter';
 
 // Per-class stat profile (multipliers on the base flight/cargo constants) + the
 // in-world model size. Scouts are quick and nimble but carry little; harvesters
@@ -22,19 +22,20 @@ export const CLASS_STATS: Record<ShipClass, {
   scout: { label: 'Scout', speed: 1.4, accel: 1.45, turn: 1.6, cargo: 0.45, mine: 0.7, size: 16 },
   cruiser: { label: 'Cruiser', speed: 1.0, accel: 1.0, turn: 1.0, cargo: 1.0, mine: 1.0, size: 24 },
   harvester: { label: 'Harvester', speed: 0.68, accel: 0.8, turn: 0.7, cargo: 2.4, mine: 1.9, size: 27 },
+  freighter: { label: 'Freighter', speed: 0.58, accel: 0.65, turn: 0.55, cargo: 4.0, mine: 0.5, size: 30 },
 };
 
 export interface FactionDef { id: string; name: string; color: number; cls: ShipClass; model: string; }
 
 // 8 factions = the player's starting fleet for the slice — a MIXED-CLASS fleet so the
-// class system shows: 3 scouts, 3 cruisers, 2 harvesters. `model` is the GLB id
-// (faction cruisers are `<id>`, variants `<id>-scout` / `<id>-harvester`).
+// class system shows: 3 scouts, 2 cruisers, 2 harvesters, 1 freighter. `model` is the
+// GLB id (`<id>` = cruiser; variants `<id>-scout` / `<id>-harvester` / `<id>-freighter`).
 export const FACTIONS: FactionDef[] = [
   { id: 'consortium-galactica', name: 'Meridian', color: 0xe8edf2, cls: 'cruiser', model: 'consortium-galactica' },
   { id: 'kareth-nara', name: 'Spirewing', color: 0x7dffc4, cls: 'scout', model: 'kareth-nara-scout' },
   { id: 'terra-nexum', name: 'Ironside', color: 0xff8a3c, cls: 'harvester', model: 'terra-nexum-harvester' },
   { id: 'illumaria', name: 'Cipher', color: 0xd24bff, cls: 'scout', model: 'illumaria-scout' },
-  { id: 'astryn-vel', name: 'Freehold', color: 0x9be84a, cls: 'cruiser', model: 'astryn-vel' },
+  { id: 'astryn-vel', name: 'Freehold', color: 0x9be84a, cls: 'freighter', model: 'astryn-vel-freighter' },
   { id: 'ezrathi', name: 'Threnody', color: 0x8cff6b, cls: 'cruiser', model: 'ezrathi' },
   { id: 'krithul', name: 'Rotmaw', color: 0xc6ff3a, cls: 'harvester', model: 'krithul-harvester' },
   { id: 'shadur-kai', name: 'Nightglass', color: 0x37e6ff, cls: 'scout', model: 'shadur-kai-scout' },

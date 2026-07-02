@@ -293,12 +293,16 @@ approved.
 
 Every faction fields the **same six ship classes** (one of each at launch), themed in
 its own design language. Classes map to the gameplay roles in `GAME_DESIGN.md` §3.
-**Modeled so far: Scout, Harvester and Cruiser for all 8 factions** — every builder in
-`scripts/concept/blender_clean.py` takes a `cls` argument, and `BUILDERS` exposes
-`<faction>`, `<faction>-scout` and `<faction>-harvester` ids (same signature structure
-and palette per faction; class changes proportions and kit). The client's fleet mixes
-classes with real stat profiles (`CLASS_STATS` in `client/src/data.ts`: speed/accel/
-turn/cargo/mining-rate multipliers + in-world size).
+**Modeled so far: Scout, Harvester, Freighter and Cruiser for all 8 factions** — every
+builder in `scripts/concept/blender_clean.py` takes a `cls` argument, and `BUILDERS`
+exposes `<faction>`, `<faction>-scout`, `<faction>-harvester` and `<faction>-freighter`
+ids (same signature structure and palette per faction; class changes proportions and
+kit). Class signatures: every **Harvester** carries a mirrored pair of segmented
+**robotic mining arms** (`arm_pair`) reaching past its bow; every **Freighter** hauls
+**one giant faction-themed container** (gold-strapped pod, vine-bound seed, corrugated
+crate, faceted monolith, lashed junk stack, haloed sarcophagus, brood sac, sealed cell).
+The client's fleet mixes classes with real stat profiles (`CLASS_STATS` in
+`client/src/data.ts`: speed/accel/turn/cargo/mining-rate multipliers + in-world size).
 
 | Class | Gameplay role | Notes |
 | --- | --- | --- |
