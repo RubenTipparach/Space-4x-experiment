@@ -5,7 +5,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { makePlanet, makeStar, makeNebula, type Planet } from './planet.ts';
+import { makePlanet, makeStar, makeNebula, type Planet, type Star } from './planet.ts';
+import { genSystem, type SystemSpec } from './sysgen.ts';
 import { makeHQCity, type HQCity } from './hqcity.ts';
 import { makeGalaxy3D, makeHyperspace, type Galaxy3D, type Hyperspace } from './galaxymap.ts';
 import {
@@ -98,111 +99,51 @@ async function main() {
   buildStars(scene);
   addPolarGrid(scene, 1450);
 
-  // ---------- the star ----------
-  const star = makeStar(30);
-  scene.add(star.group);
-
-  // ---------- planets / moons / gas nodes ----------
+  // ---------- star systems (home = hand-authored, everything else = procedural) ----------
+  // The whole system view lives under sysRoot so it can be torn down and rebuilt when
+  // the player enters another star system (see loadSystem / genSystem in sysgen.ts).
   interface Orbiter { group: THREE.Group; planet: Planet; orbit: number; angle: number; speed: number; }
   const orbiters: Orbiter[] = [];
   interface Spinner { group: THREE.Group; planet: Planet; parent: THREE.Group; dist: number; angle: number; speed: number; }
   const spinners: Spinner[] = [];
   const hoverMeshes: { mesh: THREE.Object3D; html: string }[] = [];
   const labels: { el: HTMLDivElement; obj: THREE.Object3D; off: number }[] = [];
-  let homePlanet: THREE.Group | null = null; let homeR = 22;   // HQ orbits this planet
+  const mineralPulse: { mats: THREE.MeshStandardMaterial[]; sprites: THREE.SpriteMaterial[]; light: THREE.PointLight; phase: number }[] = [];
+  let star: Star; let sysRoot = new THREE.Group(); scene.add(sysRoot);
+  let viewSystem = 0;                                          // which system the 3D view shows
+  let homePlanet: THREE.Group | null = null; let homeR = 22;   // HQ orbits this planet (home only)
+  let hqGroup: THREE.Group | null = null;
 
   const mkLabel = (text: string, obj: THREE.Object3D, off: number, cls = 'world-label') => {
     const el = document.createElement('div'); el.className = cls; el.textContent = text;
     document.body.appendChild(el); labels.push({ el, obj, off });
   };
 
-  for (const p of PLANETS) {
-    const pl = makePlanet({ radius: p.size, color: p.color, gas: p.type === 'gas', seed: seedFor(p.name) });
-    const g = pl.group;
-    g.position.set(Math.cos(p.angle0) * p.orbit, 0, Math.sin(p.angle0) * p.orbit);
-    scene.add(g);
-    orbiters.push({ group: g, planet: pl, orbit: p.orbit, angle: p.angle0, speed: p.speed });
-    if (p.name === HOME_PLANET) { homePlanet = g; homeR = p.size; }
-    if (p.type === 'gas') addRings(g, p.size, p.color);
-    mkLabel(p.name, g, p.size + 12);
-    hoverMeshes.push({ mesh: g, html: `<div class="t-name">${p.name}${p.type === 'gas' ? ' (gas giant)' : ''}</div><div class="t-tags">${p.tags.map((t) => RESOURCE_LABEL[t]).join(', ')}</div>` });
-
-    if (p.type === 'gas') {
-      for (let n = 0; n < GAS_NODES; n++) {
-        const na = (n / GAS_NODES) * Math.PI * 2, nd = p.size + 26;
-        const node = new THREE.Mesh(
-          new THREE.SphereGeometry(5, 16, 12),
-          new THREE.MeshBasicMaterial({ color: RES_COLOR.gas }));
-        node.position.set(Math.cos(na) * nd, 0, Math.sin(na) * nd);
-        g.add(node);
-        const mt: MineTarget = { name: `${p.name} node ${n + 1}`, resource: 'gas', radius: 12, pos: () => node.getWorldPosition(new THREE.Vector3()) };
-        mineTargets.push(mt);
-        hoverMeshes.push({ mesh: node, html: `<div class="t-name">${mt.name}</div><div class="t-tags">gas</div>` });
-        (node.userData as any).mine = mt;
-      }
-    } else {
-      const mt: MineTarget = { name: p.name, resource: p.primary, radius: p.size + 8, pos: () => g.getWorldPosition(new THREE.Vector3()) };
-      mineTargets.push(mt); (g.userData as any).mine = mt;
-    }
-
-    for (const m of (p.moons ?? [])) {
-      const ml = makePlanet({ radius: m.size, color: 0xc2c8d2, gas: false, seed: seedFor(m.name) });
-      const mg = ml.group;
-      mg.position.set(g.position.x + Math.cos(m.angle0) * m.dist, 0, g.position.z + Math.sin(m.angle0) * m.dist);
-      scene.add(mg);
-      spinners.push({ group: mg, planet: ml, parent: g, dist: m.dist, angle: m.angle0, speed: m.speed });
-      const mt: MineTarget = { name: m.name, resource: m.resource, radius: m.size + 6, pos: () => mg.getWorldPosition(new THREE.Vector3()) };
-      mineTargets.push(mt); (mg.userData as any).mine = mt;
-      hoverMeshes.push({ mesh: mg, html: `<div class="t-name">${m.name} (moon)</div><div class="t-tags">${RESOURCE_LABEL[m.resource]}</div>` });
-    }
-  }
-
-  // ---------- HQ (a station orbiting the home planet) ----------
-  const HQ_DIST = homeR + 34; let hqAngle = 0.6;
-  const updateHQ = (t: number) => {
-    hqAngle = 0.6 + t * 0.25;
-    const c = homePlanet ? homePlanet.position : new THREE.Vector3();
-    HQ.set(c.x + Math.cos(hqAngle) * HQ_DIST, 0, c.z + Math.sin(hqAngle) * HQ_DIST);
-  };
-  updateHQ(0);
-  const hq = new THREE.Group(); hq.position.copy(HQ); scene.add(hq);
-  const hqMesh = new THREE.Mesh(new THREE.OctahedronGeometry(10),
-    new THREE.MeshStandardMaterial({ color: 0x9fd6ff, emissive: 0x2a6ea0, emissiveIntensity: 0.6, metalness: 0.6, roughness: 0.3 }));
-  hq.add(hqMesh);
-  hq.add(new THREE.Mesh(new THREE.TorusGeometry(15, 1.0, 8, 48),
-    new THREE.MeshBasicMaterial({ color: 0x5ec8ff }))).rotation.x = Math.PI / 2;
-  mkLabel('HQ', hq, 18, 'world-label hq');
-
-  // ---------- asteroid belt (in the clear gap between Bronce and the gas giants) ----------
-  addBelt(scene);
-  // minable fields: clusters of dark rocks shot through with GLOWING mineral shards
-  // (emissive crystals + a colored light + a slow pulse animated in the frame loop)
-  const mineralPulse: { mats: THREE.MeshStandardMaterial[]; sprites: THREE.SpriteMaterial[]; light: THREE.PointLight; phase: number }[] = [];
+  // shared mineral-field assets
   const shardGeo = new THREE.OctahedronGeometry(1, 0);
-  // soft radial halo texture (additive sprites fake the bloom around each shard)
   const haloCv = document.createElement('canvas'); haloCv.width = haloCv.height = 64;
   const hctx = haloCv.getContext('2d')!;
   const hgrad = hctx.createRadialGradient(32, 32, 0, 32, 32, 32);
   hgrad.addColorStop(0, 'rgba(255,255,255,0.9)'); hgrad.addColorStop(0.4, 'rgba(255,255,255,0.35)'); hgrad.addColorStop(1, 'rgba(255,255,255,0)');
   hctx.fillStyle = hgrad; hctx.fillRect(0, 0, 64, 64);
   const haloTex = new THREE.CanvasTexture(haloCv);
-  for (const [frac, res] of [[0.2, 'ore'], [0.65, 'crystal']] as const) {
-    const a = frac * Math.PI * 2, r = BELT_R;
+
+  function addMineralField(root: THREE.Group, beltR: number, frac: number, res: 'ore' | 'crystal', seed: number) {
+    const a = frac * Math.PI * 2;
     const cluster = new THREE.Group();
-    cluster.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); scene.add(cluster);
+    cluster.position.set(Math.cos(a) * beltR, 0, Math.sin(a) * beltR); root.add(cluster);
     const rockMat = new THREE.MeshStandardMaterial({ color: 0x4d453c, roughness: 0.95, metalness: 0.05, flatShading: true });
     const glowHex = res === 'ore' ? 0xffa63c : 0x6fe8ff;   // amber ore veins / icy crystal
     const shardMats: THREE.MeshStandardMaterial[] = [];
     const shardSprites: THREE.SpriteMaterial[] = [];
-    // a seeded handful of tumbled rocks, each studded with glowing shards
-    let sd = res === 'ore' ? 7 : 23; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+    let sd = seed || 7; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
     for (let k = 0; k < 5; k++) {
       const rr = 5.5 + rnd() * 5;
       const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 0), rockMat);
       rock.position.set((rnd() - 0.5) * 26, (rnd() - 0.5) * 6, (rnd() - 0.5) * 26);
       rock.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
       cluster.add(rock);
-      for (let j = 0; j < 4; j++) {   // shards jutting from each rock
+      for (let j = 0; j < 4; j++) {   // glowing shards + additive halo auras (no bloom pass)
         const m = new THREE.MeshStandardMaterial({ color: glowHex, emissive: glowHex, emissiveIntensity: 3.2, roughness: 0.3, flatShading: true });
         shardMats.push(m);
         const shard = new THREE.Mesh(shardGeo, m);
@@ -211,7 +152,6 @@ async function main() {
         shard.scale.set(0.9 + rnd() * 1.2, 1.8 + rnd() * 2.6, 0.9 + rnd() * 1.2);
         shard.lookAt(shard.position.clone().add(dir)); shard.rotateX(Math.PI / 2);
         cluster.add(shard);
-        // additive halo sprite = the shard's glow aura (no bloom pass needed)
         const sm = new THREE.SpriteMaterial({ map: haloTex, color: glowHex, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
         shardSprites.push(sm);
         const spr = new THREE.Sprite(sm);
@@ -225,6 +165,118 @@ async function main() {
     mineTargets.push(mt); (cluster.userData as any).mine = mt;
     hoverMeshes.push({ mesh: cluster, html: `<div class="t-name">${mt.name}</div><div class="t-tags">${RESOURCE_LABEL[res]}</div>` });
   }
+
+  // HQ station (home system only)
+  const HQ_DIST = () => homeR + 34;
+  const updateHQ = (t: number) => {
+    const c = homePlanet ? homePlanet.position : new THREE.Vector3();
+    const a = 0.6 + t * 0.25;
+    HQ.set(c.x + Math.cos(a) * HQ_DIST(), 0, c.z + Math.sin(a) * HQ_DIST());
+  };
+
+  // the hand-authored home system expressed as a SystemSpec
+  const homeSpec = (): SystemSpec => ({
+    id: 0, name: 'Thallian Reach',
+    star: { radius: 30, tint: 0xffffff, cls: 'G' },
+    planets: PLANETS,
+    belt: { radius: BELT_R, fields: [{ frac: 0.2, res: 'ore' }, { frac: 0.65, res: 'crystal' }] },
+  });
+
+  function clearSystemView() {
+    for (const L of labels) L.el.remove();
+    labels.length = 0; orbiters.length = 0; spinners.length = 0;
+    hoverMeshes.length = 0; mineTargets.length = 0; mineralPulse.length = 0;
+    homePlanet = null; hqGroup = null;
+    sysRoot.traverse((o: any) => {   // free GPU resources from the old system
+      if (o.geometry && o.geometry !== shardGeo) o.geometry.dispose?.();
+      for (const m of (Array.isArray(o.material) ? o.material : o.material ? [o.material] : [])) m.dispose?.();
+    });
+    scene.remove(sysRoot);
+    sysRoot = new THREE.Group(); scene.add(sysRoot);
+  }
+
+  function buildSystemView(spec: SystemSpec) {
+    star = makeStar(spec.star.radius, spec.star.tint);
+    sysRoot.add(star.group);
+    const tint = new THREE.Color(spec.star.tint).lerp(new THREE.Color(0xffffff), 0.45);
+    sunLight.color.copy(tint);   // the system's key light matches its star
+
+    for (const p of spec.planets) {
+      const pl = makePlanet({ radius: p.size, color: p.color, gas: p.type === 'gas', seed: seedFor(p.name) });
+      const g = pl.group;
+      g.position.set(Math.cos(p.angle0) * p.orbit, 0, Math.sin(p.angle0) * p.orbit);
+      sysRoot.add(g);
+      orbiters.push({ group: g, planet: pl, orbit: p.orbit, angle: p.angle0, speed: p.speed });
+      if (spec.id === 0 && p.name === HOME_PLANET) { homePlanet = g; homeR = p.size; }
+      if (p.type === 'gas') addRings(g, p.size, p.color);
+      mkLabel(p.name, g, p.size + 12);
+      hoverMeshes.push({ mesh: g, html: `<div class="t-name">${p.name}${p.type === 'gas' ? ' (gas giant)' : ''}</div><div class="t-tags">${p.tags.map((t) => RESOURCE_LABEL[t]).join(', ')}</div>` });
+
+      if (p.type === 'gas') {
+        for (let n = 0; n < GAS_NODES; n++) {
+          const na = (n / GAS_NODES) * Math.PI * 2, nd = p.size + 26;
+          const node = new THREE.Mesh(
+            new THREE.SphereGeometry(5, 16, 12),
+            new THREE.MeshBasicMaterial({ color: RES_COLOR.gas }));
+          node.position.set(Math.cos(na) * nd, 0, Math.sin(na) * nd);
+          g.add(node);
+          const mt: MineTarget = { name: `${p.name} node ${n + 1}`, resource: 'gas', radius: 12, pos: () => node.getWorldPosition(new THREE.Vector3()) };
+          mineTargets.push(mt);
+          hoverMeshes.push({ mesh: node, html: `<div class="t-name">${mt.name}</div><div class="t-tags">gas</div>` });
+          (node.userData as any).mine = mt;
+        }
+      } else {
+        const mt: MineTarget = { name: p.name, resource: p.primary, radius: p.size + 8, pos: () => g.getWorldPosition(new THREE.Vector3()) };
+        mineTargets.push(mt); (g.userData as any).mine = mt;
+      }
+
+      for (const m of (p.moons ?? [])) {
+        const ml = makePlanet({ radius: m.size, color: 0xc2c8d2, gas: false, seed: seedFor(m.name) });
+        const mg = ml.group;
+        mg.position.set(g.position.x + Math.cos(m.angle0) * m.dist, 0, g.position.z + Math.sin(m.angle0) * m.dist);
+        sysRoot.add(mg);
+        spinners.push({ group: mg, planet: ml, parent: g, dist: m.dist, angle: m.angle0, speed: m.speed });
+        const mt: MineTarget = { name: m.name, resource: m.resource, radius: m.size + 6, pos: () => mg.getWorldPosition(new THREE.Vector3()) };
+        mineTargets.push(mt); (mg.userData as any).mine = mt;
+        hoverMeshes.push({ mesh: mg, html: `<div class="t-name">${m.name} (moon)</div><div class="t-tags">${RESOURCE_LABEL[m.resource]}</div>` });
+      }
+    }
+
+    if (spec.id === 0) {   // HQ station orbits the home planet
+      updateHQ(0);
+      hqGroup = new THREE.Group(); hqGroup.position.copy(HQ); sysRoot.add(hqGroup);
+      hqGroup.add(new THREE.Mesh(new THREE.OctahedronGeometry(10),
+        new THREE.MeshStandardMaterial({ color: 0x9fd6ff, emissive: 0x2a6ea0, emissiveIntensity: 0.6, metalness: 0.6, roughness: 0.3 })));
+      hqGroup.add(new THREE.Mesh(new THREE.TorusGeometry(15, 1.0, 8, 48),
+        new THREE.MeshBasicMaterial({ color: 0x5ec8ff }))).rotation.x = Math.PI / 2;
+      mkLabel('HQ', hqGroup, 18, 'world-label hq');
+    }
+
+    if (spec.belt) {
+      addBelt(sysRoot, spec.belt.radius);
+      spec.belt.fields.forEach((f, i) => addMineralField(sysRoot, spec.belt!.radius, f.frac, f.res, spec.id * 31 + i * 16 + 7));
+    }
+  }
+
+  function loadSystem(id: number) {
+    clearSystemView();
+    const spec = id === 0 ? homeSpec() : genSystem(galaxy!.systems[id]);
+    buildSystemView(spec);
+    viewSystem = id;
+    sysNameEl.textContent = `${spec.name}${id === 0 ? ' (home)' : ''} · ${spec.star.cls}-class`;
+    // re-link ship orders to the freshly built system objects (matched by name)
+    for (const s of ships) {
+      if (!s || s.system !== id || !s.mine) continue;
+      const nm = s.mine.name;
+      s.mine = mineTargets.find((m) => m.name === nm) ?? null;
+      if (!s.mine && (s.state === 'mining' || s.state === 'moving')) { s.state = 'idle'; s.moveTo = null; }
+    }
+  }
+
+  // viewed-system name readout (top center, under the hint bar)
+  const sysNameEl = document.createElement('div'); sysNameEl.className = 'gal-hud sys-hud'; document.body.appendChild(sysNameEl);
+  buildSystemView(homeSpec());
+  sysNameEl.textContent = 'Thallian Reach (home) · G-class';
 
 
   // ---------- fleet (glTF ships) ----------
@@ -326,7 +378,11 @@ async function main() {
       const i = galaxy3d.pickStar(ndc); const s = ships[selected];
       if (i == null || !s) return;
       if (s.voyage) { flashHint(`${s.def.name} is already in transit`); return; }
-      if (i === s.system) { flashHint(`${s.def.name} is already there`); return; }
+      if (i === s.system) {   // clicking the star your ship is AT enters that system
+        closeGalaxy(); loadSystem(i);
+        flashHint(`entering ${galaxy!.systems[i].name}`);
+        return;
+      }
       const r = routeTo(s.system, i); if (!r) { flashHint('no route'); return; }
       departTo(s, r); flashHint(`${s.def.name} → ${galaxy!.systems[i].name} (${Math.round(routeEta(r))}s)`);
       return;
@@ -354,7 +410,16 @@ async function main() {
   const fleetEl = document.getElementById('fleet')!;
   const recallBtn = document.createElement('button'); recallBtn.className = 'recall'; recallBtn.textContent = 'Recall ship';
   document.body.appendChild(recallBtn);
-  recallBtn.onclick = () => { const s = ships[selected]; if (!s) return; s.mine = null; s.moveTo = { x: HQ.x, z: HQ.z }; s.state = 'returning'; flashHint(`${s.def.name} → recalled to HQ`); };
+  recallBtn.onclick = () => {
+    const s = ships[selected]; if (!s) return;
+    if (s.voyage) { flashHint(`${s.def.name} is in transit`); return; }
+    if (s.system !== 0) {   // in another system: jump home through the lanes first
+      const r = routeTo(s.system, 0);
+      if (r) { departTo(s, r); flashHint(`${s.def.name} → returning to HQ (${r.length - 1} jumps)`); }
+      return;
+    }
+    s.mine = null; s.moveTo = { x: HQ.x, z: HQ.z }; s.state = 'returning'; flashHint(`${s.def.name} → recalled to HQ`);
+  };
   let hintTimer = 0;
   const DEFAULT_HINT = 'Drag to orbit · scroll to zoom · click a ship to select, then click a planet/node to mine or empty space to move.';
   function flashHint(m: string) { hintEl.textContent = m; hintTimer = 3; }
@@ -428,9 +493,9 @@ async function main() {
     hqCity.resize(innerWidth, innerHeight); hqCity.setEnabled(true);
     hqOpen = true; controls.enabled = false; hqSel = null; hqUI.hidden = false; renderHQPanel();
     for (const L of labels) L.el.style.display = 'none';   // hide system world-labels behind the city
-    tip.hidden = true; hqBtn.textContent = 'Solar System';
+    tip.hidden = true; sysNameEl.hidden = true; hqBtn.textContent = 'Solar System';
   }
-  function closeHQ() { hqOpen = false; hqUI.hidden = true; controls.enabled = true; if (hqCity) hqCity.setEnabled(false); renderer.domElement.style.cursor = 'default'; hqBtn.textContent = 'HQ City'; }
+  function closeHQ() { hqOpen = false; hqUI.hidden = true; controls.enabled = true; if (hqCity) hqCity.setEnabled(false); sysNameEl.hidden = false; renderer.domElement.style.cursor = 'default'; hqBtn.textContent = 'HQ City'; }
   hqBtn.onclick = () => { if (hqOpen) closeHQ(); else { if (galOpen) closeGalaxy(); openHQ(); } };
 
   // ---------- galaxy data + interstellar travel ----------
@@ -457,7 +522,16 @@ async function main() {
     const a = galaxy!.systems[s.system]; return { x: a.x, y: a.y };
   }
   function departTo(s: Ship, route: number[]) { s.voyage = { route, i: 0, t: 0 }; s.docked = false; s.mine = null; s.moveTo = null; s.state = 'idle'; s.speed = 0; }
-  function onArrive(s: Ship) { if (s.system === 0) { s.pos = { x: HQ.x, z: HQ.z }; s.heading = 0; s.speed = 0; s.state = 'idle'; s.docked = true; } }
+  function onArrive(s: Ship) {
+    if (s.system === 0) {   // home: dock at HQ and deposit any cargo hauled back
+      s.pos = { x: HQ.x, z: HQ.z }; s.heading = 0; s.speed = 0; s.state = 'idle'; s.docked = true;
+      if (s.cargoRes && s.cargo > 0) { resources[s.cargoRes] += s.cargo; s.cargo = 0; s.cargoRes = null; }
+    } else {                // remote system: drop out of hyperspace on an entry ring
+      const a = (ships.indexOf(s) / 8) * Math.PI * 2 + s.system * 0.7;
+      s.pos = { x: Math.cos(a) * 560, z: Math.sin(a) * 560 };
+      s.heading = angWrap(Math.atan2(-s.pos.x, -s.pos.z)); s.speed = 0; s.state = 'idle'; s.moveTo = null;
+    }
+  }
 
   // ---------- 3D galaxy map + hyperspace (its own scenes; see galaxymap.ts) ----------
   // The map renders on the main canvas (the fleet hotbar stays visible) so you can pick
@@ -503,21 +577,23 @@ async function main() {
     galaxy3d.resize(innerWidth, innerHeight); hyper.resize(innerWidth, innerHeight);
     galaxy3d.setEnabled(true); galOpen = true; controls.enabled = false; hyperShip = -1;
     if (!galBtnEls.length) buildGalShipBtns();
-    for (const L of labels) L.el.style.display = 'none'; tip.hidden = true;
+    for (const L of labels) L.el.style.display = 'none'; tip.hidden = true; sysNameEl.hidden = true;
     galLabel.hidden = false; galShipBtns.hidden = false; galBtn.textContent = 'Solar System'; galHover = -1; galLabelText();
   }
   function closeGalaxy() {
     galOpen = false; if (galaxy3d) galaxy3d.setEnabled(false); controls.enabled = true;
-    galLabel.hidden = true; galShipBtns.hidden = true; renderer.domElement.style.cursor = 'default'; galBtn.textContent = 'Galaxy Map';
+    galLabel.hidden = true; galShipBtns.hidden = true; sysNameEl.hidden = false;
+    renderer.domElement.style.cursor = 'default'; galBtn.textContent = 'Galaxy Map';
   }
   galBtn.onclick = () => { if (hqOpen) closeHQ(); galOpen ? closeGalaxy() : openGalaxy(); };
   // hover label text for the system under the cursor (+ route ETA for the selected ship)
   function galLabelText() {
     if (galHover < 0) { galLabel.textContent = 'Local Cluster — select a ship, then click a star to send it (~1 min/jump). Drag to orbit · scroll to zoom.'; return; }
     const sy = galaxy!.systems[galHover], s = ships[selected];
-    const r = s ? routeTo(s.system, galHover) : null;
+    const here = s && !s.voyage && s.system === galHover;
+    const r = s && !here ? routeTo(s.system, galHover) : null;
     const eta = r && r.length > 1 ? `  ·  ${Math.round(routeEta(r))}s via ${r.length - 1} jump${r.length > 2 ? 's' : ''}` : '';
-    galLabel.textContent = `${sy.name} · ${sy.star.class}-class · ${sy.planets} planets${galHover === 0 ? ' · HOME' : ''}${eta}`;
+    galLabel.textContent = `${sy.name} · ${sy.star.class}-class · ${sy.planets} planets${galHover === 0 ? ' · HOME' : ''}${here ? '  ·  click to ENTER' : eta}`;
   }
   window.addEventListener('pointermove', (e) => {
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
@@ -559,7 +635,7 @@ async function main() {
 
     for (const o of orbiters) { o.angle += o.speed * dt; o.group.position.set(Math.cos(o.angle) * o.orbit, 0, Math.sin(o.angle) * o.orbit); o.planet.update(dt, camera.position); }
     for (const s of spinners) { s.angle += s.speed * dt; s.group.position.set(s.parent.position.x + Math.cos(s.angle) * s.dist, 0, s.parent.position.z + Math.sin(s.angle) * s.dist); s.planet.update(dt, camera.position); }
-    updateHQ(T); hq.position.copy(HQ); hq.rotation.y = T * 0.3;   // station orbits the home planet
+    if (viewSystem === 0 && hqGroup) { updateHQ(T); hqGroup.position.copy(HQ); hqGroup.rotation.y = T * 0.3; }   // station orbits the home planet
 
 
     // advance interstellar voyages (~1 min per jump-lane segment), even while the map is closed
@@ -602,8 +678,8 @@ async function main() {
       const s = ships[idx];
       if (!s) continue;
       s.beam.visible = false;
-      // ships away from the home system (or mid-jump) aren't shown in the local view
-      const away = !!s.voyage || s.system !== 0;
+      // ships outside the VIEWED system (or mid-jump) aren't shown in the local view
+      const away = !!s.voyage || s.system !== viewSystem;
       s.obj.visible = !away; s.disc.visible = !away;
       if (away) { s.path.visible = false; s.destMarker.visible = false; continue; }
 
@@ -627,7 +703,14 @@ async function main() {
       if (s.state === 'mining' && s.mine) {
         const p = perfOf(s);
         s.cargoRes = s.mine.resource; s.cargo = Math.min(CARGO_CAP * p.cargo, s.cargo + MINE_RATE * p.mine * dt);
-        if (s.cargo >= CARGO_CAP * p.cargo) s.state = 'returning';
+        if (s.cargo >= CARGO_CAP * p.cargo) {
+          if (s.system === 0) s.state = 'returning';
+          else {   // full in a remote system: haul it home through the jump lanes
+            const r = routeTo(s.system, 0);
+            if (r) { departTo(s, r); flashHint(`${s.def.name} full — hauling home`); }
+            else s.state = 'idle';
+          }
+        }
         drawBeam(s, s.mine.pos(), pulse);
       }
       if (s.state === 'idle' && s.mine && s.cargo === 0) s.state = 'moving';
@@ -679,7 +762,7 @@ async function main() {
   buildToolbar();
   updateHud();
   frame();
-  (window as any).__game = { ships, mineTargets, scene, camera, controls, galaxy, routeTo, departTo, openGalaxy, closeGalaxy, selectShip, setGalHover: (i: number) => { galHover = i; galLabelText(); }, get galaxy3d() { return galaxy3d; }, get hyper() { return hyper; } };
+  (window as any).__game = { ships, mineTargets, scene, camera, controls, galaxy, routeTo, departTo, openGalaxy, closeGalaxy, selectShip, loadSystem, get viewSystem() { return viewSystem; }, setGalHover: (i: number) => { galHover = i; galLabelText(); }, get galaxy3d() { return galaxy3d; }, get hyper() { return hyper; } };
   (window as any).__ready = true;
 
   // ---- helpers that need beam geometry ----
@@ -782,18 +865,18 @@ function addRings(g: THREE.Group, size: number, color: number) {
   ring.rotation.x = -Math.PI / 2 + 0.35; g.add(ring);
 }
 
-function addBelt(scene: THREE.Scene) {
+function addBelt(root: THREE.Group, beltR: number) {
   const N = 700; const geo = new THREE.DodecahedronGeometry(1, 0);
   const mat = new THREE.MeshStandardMaterial({ color: 0x6b6256, roughness: 0.95, flatShading: true });
   const mesh = new THREE.InstancedMesh(geo, mat, N); const m = new THREE.Matrix4(); const q = new THREE.Quaternion();
   for (let i = 0; i < N; i++) {
-    const a = Math.random() * Math.PI * 2; const r = BELT_R + (Math.random() - 0.5) * 90;
+    const a = Math.random() * Math.PI * 2; const r = beltR + (Math.random() - 0.5) * 90;
     const s = 1 + Math.random() * 3;
     q.setFromEuler(new THREE.Euler(Math.random() * 6, Math.random() * 6, Math.random() * 6));
     m.compose(new THREE.Vector3(Math.cos(a) * r, (Math.random() - 0.5) * 10, Math.sin(a) * r), q, new THREE.Vector3(s, s, s));
     mesh.setMatrixAt(i, m);
   }
-  scene.add(mesh);
+  root.add(mesh);
 }
 
 function buildStars(scene: THREE.Scene) {

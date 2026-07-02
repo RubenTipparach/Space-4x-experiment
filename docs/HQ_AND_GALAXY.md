@@ -95,6 +95,20 @@ A **local cluster of 100 procedurally generated star systems**, connected by a
   a hyperspace scene (`makeHyperspace`): the ship's real glTF model flies down a wormhole tube
   (scrolling additive ring wall) with **star streaks** rushing past and an engine glow. Selecting
   a ship that is *not* travelling returns to the cluster map.
+- **Procedural star systems (slice):** every system on the map is a REAL, enterable solar
+  system. `client/src/sysgen.ts` expands a cached galaxy entry into a deterministic
+  `SystemSpec` (same seed → same system): star radius + tint from its spectral class (the sun
+  shader takes a class tint and the system's key light matches), N planets with Kepler-ish
+  orbits, types (gas giants past the frost line, with rings + atmosphere nodes), resource
+  tags, moons, and usually an asteroid belt with 1–2 glowing mineral fields parked in the
+  widest orbital gap. The home system stays hand-authored (`data.ts`).
+- **Entering systems:** on the galaxy map, **clicking the star your selected ship is at
+  enters that system** (the hover readout shows "click to ENTER"); the whole system view
+  tears down and rebuilds (`loadSystem`), and a HUD badge names the viewed system. Ships
+  arriving in a remote system drop out on an entry ring; ships that fill their cargo in a
+  remote system **auto-route home through the jump lanes** and deposit on docking; Recall
+  from another system routes the ship home first. Orders re-link by node name when a system
+  is re-entered (systems rebuild deterministically).
 - **Later:** fog-of-war via the Sensor Array, per-system contents to fly into on arrival,
   fuel/range limits, multi-ship fleet orders, expansion beyond the cluster (the cache is
   the editable seed for that).

@@ -243,7 +243,7 @@ export function makePlanet(o: PlanetOpts): Planet {
 // The central star: a turbulent photosphere (granulation, sunspots, limb darkening),
 // flickering corona shells, and a soft camera-facing bloom halo.
 const SUN_PHOTO_FRAG = NOISE + `
-uniform float uTime; uniform vec3 uViewPos;
+uniform float uTime; uniform vec3 uViewPos; uniform vec3 uTint;
 varying vec3 vLocal; varying vec3 vWN; varying vec3 vWP;
 void main(){
   vec3 p = normalize(vLocal);
@@ -254,6 +254,7 @@ void main(){
   c = mix(c, vec3(1.0,0.95,0.82), smoothstep(0.28,0.62,g));     // bright plages
   float spot = smoothstep(0.5,0.72, fbm(p*4.0 + 19.0));
   c = mix(c, vec3(0.55,0.16,0.04), spot*0.55);                  // sunspots
+  c *= uTint;                                                    // spectral class tint
   vec3 N = normalize(vWN); vec3 V = normalize(uViewPos - vWP);
   float limb = pow(max(dot(N,V),0.0), 0.5);                     // limb darkening
   c *= (0.55 + 0.45*limb);
@@ -272,11 +273,15 @@ void main(){
 
 export interface Star { group: THREE.Group; update(dt: number, camPos: THREE.Vector3): void; }
 
-export function makeStar(radius: number): Star {
+export function makeStar(radius: number, tint = 0xffffff): Star {
+  // tint shifts the whole star toward its spectral class (red dwarf / blue giant);
+  // the surface palette stays "sun-like" underneath so granulation still reads.
+  const tc = new THREE.Color(tint);
+  const soft = new THREE.Color(1, 1, 1).lerp(tc, 0.75);   // don't fully crush the palette
   const g = new THREE.Group();
   const photoMat = new THREE.ShaderMaterial({
     vertexShader: VERT, fragmentShader: SUN_PHOTO_FRAG,
-    uniforms: { uTime: { value: 0 }, uViewPos: { value: new THREE.Vector3() } },
+    uniforms: { uTime: { value: 0 }, uViewPos: { value: new THREE.Vector3() }, uTint: { value: new THREE.Vector3(soft.r, soft.g, soft.b) } },
   });
   g.add(new THREE.Mesh(SPHERE, photoMat)).scale.setScalar(radius);
 
@@ -289,8 +294,8 @@ export function makeStar(radius: number): Star {
     });
     g.add(new THREE.Mesh(SPHERE, m)).scale.setScalar(radius * scale); coronas.push(m);
   };
-  shell(1.3, 2.4, 1.0, 0xffd89a);    // tight chromosphere
-  shell(1.85, 2.8, 0.6, 0xff9a4a);   // outer corona glow
+  shell(1.3, 2.4, 1.0, new THREE.Color(0xffd89a).lerp(tc, 0.6).getHex());    // tight chromosphere
+  shell(1.85, 2.8, 0.6, new THREE.Color(0xff9a4a).lerp(tc, 0.6).getHex());   // outer corona glow
 
   let t = 0;
   return {
