@@ -181,6 +181,14 @@ export function makeHyperspace(renderer: THREE.WebGLRenderer, background: THREE.
       if (!obj) return;
       const c = obj.clone(true);
       c.rotation.set(0, Math.PI, 0);   // nose toward -Z (into the tunnel); we view its rear 3/4
+      const pl = c.getObjectByName('plume');   // cloned exhaust: lock it to full burn
+      if (pl) {
+        pl.scale.set(1.1, 1.1, 1.8);
+        pl.traverse((o: any) => {
+          if (o.material) { o.material = o.material.clone(); o.material.opacity = o.isSprite ? 0.85 : 0.55; }
+          if (o.isLight) o.intensity = 2.6;
+        });
+      }
       // normalize size and recenter so the model sits at the holder origin (in frame)
       const bbox = new THREE.Box3().setFromObject(c), size = new THREE.Vector3(); bbox.getSize(size);
       const s = 15 / Math.max(size.x, size.y, size.z, 0.001); c.scale.multiplyScalar(s);

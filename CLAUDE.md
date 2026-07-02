@@ -53,8 +53,10 @@ Messy ships come from asymmetric parts straddling the centerline. The discipline
    **`engine_block`** (thruster housings with recessed glow nozzles), **`window_strip`**
    (mirrored emissive window rows), **`greeble_strip`** (deterministic mechanical blocks,
    one-sided via `offside` or `mirror=True`), `antenna`, and `loft_axis` for anything
-   lofted along X/Z. `emat(name, color, strength)` glow materials also bake a base color
-   so glow parts keep their tint in-game (the client strips emission on load).
+   lofted along X/Z. `emat(name, color, strength)` glow materials also bake a base color;
+   in-game the client KEEPS the emissive (clamped to ~2.4 intensity so ACES doesn't clip
+   it) — windows/slits/nozzles glow live, and each ship gets an exhaust plume + engine
+   PointLight scaled by throttle (see `makePlume` in `client/src/main.ts`).
 3. **Add asymmetry only as detail that never crosses the centerline.** Any non-centered,
    non-mirrored shape must lie **entirely on one side** of `x = 0`. Wrap every such
    shape in **`offside(...)`**, which asserts/pushes the shape so its bounding box does

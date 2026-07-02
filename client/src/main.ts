@@ -31,7 +31,7 @@ type Vec = { x: number; z: number };
 interface MineTarget { name: string; resource: ResourceTag; radius: number; pos(): THREE.Vector3; }
 interface Ship {
   def: typeof FACTIONS[number]; obj: THREE.Object3D; disc: THREE.Mesh; destMarker: THREE.Mesh;
-  beam: THREE.Mesh; path: THREE.Line;
+  beam: THREE.Mesh; path: THREE.Line; plume: THREE.Group;
   pos: Vec; heading: number; speed: number; omega: number; docked: boolean;
   state: 'idle' | 'moving' | 'mining' | 'returning';
   moveTo: Vec | null; mine: MineTarget | null; cargo: number; cargoRes: ResourceTag | null;
@@ -84,7 +84,13 @@ async function main() {
   const sunLight = new THREE.PointLight(0xfff2d8, 4.0, 0, 0); // decay 0 → constant across the system
   sunLight.position.set(0, 0, 0);
   scene.add(sunLight);
-  scene.add(new THREE.AmbientLight(0xb9c8e0, 0.22));   // a bit of ambient on every object (matches planet ambient)
+  // the sun stays the KEY light; ambient + two dim directionals act as fill/rim so the
+  // night side of a hull still reads instead of dropping to black
+  scene.add(new THREE.AmbientLight(0xb9c8e0, 0.32));
+  const fillLight = new THREE.DirectionalLight(0x8fb0e8, 0.3);   // cool fill from high "north"
+  fillLight.position.set(500, 700, -400); scene.add(fillLight);
+  const rimLight = new THREE.DirectionalLight(0xbfd4ff, 0.22);   // pale rim from the far side
+  rimLight.position.set(-600, 400, 700); scene.add(rimLight);
 
   // ---------- background: starfield + nebula dome ----------
   const nebulaTex = makeNebula(renderer);    // baked raymarched volumetric nebula (static cubemap)
@@ -182,6 +188,32 @@ async function main() {
 
   // ---------- fleet (glTF ships) ----------
   const loader = new GLTFLoader();
+  // shared exhaust-plume assets: open cones (outer color + inner hot core) with the base
+  // at the nozzle and the tip trailing back (+Z in model space = stern), plus a soft
+  // sprite glow. Geometry is translated/rotated once so scaling Z stretches the plume.
+  const plumeGeoOuter = new THREE.ConeGeometry(2.3, 11, 12, 1, true);
+  const plumeGeoInner = new THREE.ConeGeometry(1.15, 7.5, 10, 1, true);
+  for (const g of [plumeGeoOuter, plumeGeoInner]) { g.translate(0, g.parameters.height / 2, 0); g.rotateX(Math.PI / 2); }
+  const glowCv = document.createElement('canvas'); glowCv.width = glowCv.height = 64;
+  const gctx = glowCv.getContext('2d')!;
+  const grad = gctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,0.95)'); grad.addColorStop(0.35, 'rgba(255,255,255,0.45)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  gctx.fillStyle = grad; gctx.fillRect(0, 0, 64, 64);
+  const glowTex = new THREE.CanvasTexture(glowCv);
+  function makePlume(color: number, rear: THREE.Vector3): THREE.Group {
+    const p = new THREE.Group(); p.name = 'plume'; p.position.copy(rear);
+    const outer = new THREE.Mesh(plumeGeoOuter, new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    const inner = new THREE.Mesh(plumeGeoInner, new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTex, color, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+    halo.scale.setScalar(7);
+    const light = new THREE.PointLight(color, 2.0, 55, 1.7); light.position.set(0, 0, 2);   // the engine's own light
+    p.add(outer, inner, halo, light);
+    (p.userData as any) = { outer, inner, halo, light };
+    return p;
+  }
   const discGeo = new THREE.RingGeometry(14.5, 17.5, 44);     // faint flat ring under each ship (hover/select target)
   const destGeo = new THREE.RingGeometry(9, 12, 44);          // pulsing destination marker
   const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
@@ -201,8 +233,9 @@ async function main() {
           if (!m) continue;
           if (m.metalness !== undefined) m.metalness = Math.min(m.metalness, 0.15);
           if (m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.65);
-          // drop mesh-emissive "glow spots" for now (proper emissive textures come later)
-          if (m.emissive) { m.emissive.setHex(0x000000); m.emissiveIntensity = 0; m.emissiveMap = null; }
+          // keep the baked emissive (windows / engine slits / vein lights) but clamp the
+          // exported strength (10+) so ACES tone mapping doesn't clip it to pure white
+          if (m.emissive && m.emissiveIntensity !== undefined) m.emissiveIntensity = Math.min(m.emissiveIntensity, 2.4);
         }
       });
     } catch (e) {
@@ -210,6 +243,10 @@ async function main() {
       console.error('ship load', def.id, e);
     }
     const holder = new THREE.Group(); holder.add(obj);
+    // exhaust plume + engine light at the stern (model nose = -Z, so stern = bbox max z)
+    const bb = new THREE.Box3().setFromObject(obj);
+    const plume = makePlume(def.color, new THREE.Vector3(0, (bb.min.y + bb.max.y) / 2, bb.max.z - 0.5));
+    holder.add(plume);
     const start = { x: HQ.x + (i - 3.5) * 34, z: HQ.z + (i % 2 ? 26 : 54) };
     holder.position.set(start.x, SHIP_Y, start.z); scene.add(holder);
     (holder.userData as any).shipIndex = i;
@@ -229,7 +266,7 @@ async function main() {
       new THREE.LineDashedMaterial({ color: 0x6fd2ff, transparent: true, opacity: 0.6, dashSize: 9, gapSize: 7 }));
     path.visible = false; scene.add(path);
 
-    ships[i] = { def, obj: holder, disc, destMarker, beam, path, pos: { ...start }, heading: 0, speed: 0, omega: 0, docked: true, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null, system: 0, voyage: null };
+    ships[i] = { def, obj: holder, disc, destMarker, beam, path, plume, pos: { ...start }, heading: 0, speed: 0, omega: 0, docked: true, state: 'idle', moveTo: null, mine: null, cargo: 0, cargoRes: null, system: 0, voyage: null };
   }));
 
   // ---------- raycasting: select ships / move / mine ----------
@@ -544,6 +581,19 @@ async function main() {
 
       // glTF nose points -Z → rotate by heading+π so the nose leads
       s.obj.position.set(s.pos.x, SHIP_Y, s.pos.z); s.obj.rotation.y = s.heading + Math.PI;
+
+      // exhaust plume + engine light follow the throttle (docked = pilot light only)
+      {
+        const thr = s.docked ? 0 : s.speed / MAX_SPEED;
+        const flick = 0.85 + 0.15 * Math.sin(T * 27 + idx * 3.1);
+        const pu = s.plume.userData as any;
+        s.plume.scale.set(0.55 + 0.55 * thr, 0.55 + 0.55 * thr, 0.22 + 1.5 * thr * flick);
+        pu.outer.material.opacity = (0.10 + 0.45 * thr) * flick;
+        pu.inner.material.opacity = (0.08 + 0.6 * thr) * flick;
+        pu.halo.material.opacity = 0.25 + 0.6 * thr * flick;
+        pu.halo.scale.setScalar(4.5 + 5 * thr);
+        pu.light.intensity = (0.5 + 2.6 * thr) * flick;
+      }
 
       // faint disc under every ship; glow on hover, brightest when selected
       s.disc.position.set(s.pos.x, 1, s.pos.z);
