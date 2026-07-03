@@ -1,0 +1,56 @@
+# Fly.io app config for the Stellar Frontier gateway (serves the game + API).
+#
+# Deploys via .github/workflows/deploy.yml using the FLY_API_TOKEN repo secret.
+# One-time bootstrap (run locally with flyctl — full steps in docs/DEPLOY.md):
+#
+#   fly apps create stellar-frontier            # pick another name if taken, and
+#                                               # update `app` below + deploy.yml
+#   fly volumes create sf_data --size 1 --region ord --app stellar-frontier
+#   fly secrets set SESSION_SECRET=$(openssl rand -hex 32) --app stellar-frontier
+#   fly secrets set DISCORD_CLIENT_ID=... DISCORD_CLIENT_SECRET=... \
+#                   DISCORD_PUBLIC_KEY=... DISCORD_BOT_TOKEN=... \
+#                   DISCORD_WEBHOOK_URL=... --app stellar-frontier
+#
+# The Discord secrets are OPTIONAL — the gateway boots and serves the game
+# without them; each feature (login / DMs / webhooks / slash commands) turns on
+# when its secret appears. Client secret + bot token live ONLY in Fly secrets,
+# never in the repo or the client bundle (TECH_DESIGN §8).
+
+app = "stellar-frontier"
+primary_region = "ord"   # pick your closest region; keep it matching deploy.yml
+
+[build]
+
+[env]
+  PORT = "8080"
+  PUBLIC_BASE_URL = "https://stellar-frontier.fly.dev"
+  DATABASE_PATH = "/data/sf.db"   # reserved for the Phase-1 SQLite world store
+
+[[mounts]]
+  source = "sf_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 100
+    hard_limit = 200
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

@@ -1,0 +1,155 @@
+name: Deploy gateway to Fly.io
+
+# Deploys the Stellar Frontier gateway (game + API in ONE Fly app) on every
+# push (any branch, most-recent wins) and on manual dispatch. The pattern
+# follows the high-frontier-fan-game reference deploy:
+#   - multi-stage readiness gate: missing token / invalid token / app not yet
+#     bootstrapped → SKIP (not fail); docs/DEPLOY.md has the one-time bootstrap
+#   - idempotent volume + single-machine enforcement (single-writer SQLite later)
+#   - Discord/session secrets staged (--stage) before the release so the new
+#     image boots with them, without clobbering values set out-of-band
+#   - retried deploy (Fly's remote builder can drop transiently)
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # A newer commit cancels a stale in-flight BUILD — never the Fly deploy.
+    concurrency:
+      group: fly-build
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Build client (tsc + vite)
+        run: |
+          npm --prefix client ci --no-audit --no-fund
+          npm --prefix client run build
+      - name: Check server parses
+        run: |
+          node --check server/index.js
+          node --check server/discord.js
+          node --check scripts/discord/register-commands.mjs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # Only the canonical repo has Fly access; forks fall through cleanly.
+    if: ${{ contains(fromJSON('["rubentipparach/space-4x-experiment", "RubenTipparach/Space-4x-experiment"]'), github.repository) }}
+    # Never cancel an in-flight Fly deploy — a cancelled release can leave the
+    # live app stale (the exact failure the reference repo documents).
+    concurrency:
+      group: fly-deploy
+      cancel-in-progress: false
+    env:
+      APP: stellar-frontier
+      REGION: ord
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Check Fly readiness
+        id: fly_gate
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "${FLY_API_TOKEN}" ]; then
+            echo "::notice::FLY_API_TOKEN not set; skipping deploy. See docs/DEPLOY.md 'One-time setup'."
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! flyctl auth whoami > /dev/null 2>&1; then
+            echo "::notice::FLY_API_TOKEN rejected by Fly; regenerate with 'fly tokens create deploy -a ${APP}'."
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! flyctl status -a "$APP" > /dev/null 2>&1; then
+            echo "::notice::Fly app '${APP}' not found; bootstrap it per docs/DEPLOY.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      # Exactly one machine on one volume (single-writer SQLite when the world
+      # store lands). Idempotent: no-ops when already in the desired state.
+      - name: Ensure volume + single machine
+        if: steps.fly_gate.outputs.ready == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -e
+          VOL=$(flyctl volumes list -a "$APP" --json | jq '[.[] | select(.name=="sf_data" and .region=="'"$REGION"'")] | length')
+          if [ "${VOL:-0}" -lt 1 ]; then
+            flyctl volumes create sf_data --size 1 --region "$REGION" --app "$APP" --yes
+          else
+            echo "Volume sf_data already exists in $REGION"
+          fi
+          flyctl machine list -a "$APP" --json > /tmp/machines.json
+          FIRST=""
+          for M in $(jq -r '.[] | select((.config.metadata.fly_process_group // "app") == "app") | .id' /tmp/machines.json); do
+            if [ -z "$FIRST" ]; then FIRST="$M"; echo "Keeping app machine $M"; continue; fi
+            echo "Destroying extra app machine $M"
+            flyctl machine stop "$M" --app "$APP" || true
+            flyctl machine destroy "$M" --app "$APP" --force || true
+          done
+
+      # Stage secrets BEFORE the deploy (--stage defers the restart; the deploy
+      # applies them in the same release). Each secret only syncs when set in
+      # Actions secrets — unset ones never clobber values set via `fly secrets set`.
+      - name: Sync secrets to Fly.io
+        if: steps.fly_gate.outputs.ready == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+          DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          set -e
+          stage_secret() {
+            local name="$1" val="$2"
+            if [ -n "$val" ]; then
+              echo "Staging $name"
+              flyctl secrets set "$name=$val" --app "$APP" --stage
+            else
+              echo "::notice::$name not set in Actions secrets; leaving Fly value untouched."
+            fi
+          }
+          stage_secret SESSION_SECRET        "${SESSION_SECRET}"
+          stage_secret DISCORD_CLIENT_ID     "${DISCORD_CLIENT_ID}"
+          stage_secret DISCORD_CLIENT_SECRET "${DISCORD_CLIENT_SECRET}"
+          stage_secret DISCORD_BOT_TOKEN     "${DISCORD_BOT_TOKEN}"
+          stage_secret DISCORD_PUBLIC_KEY    "${DISCORD_PUBLIC_KEY}"
+          stage_secret DISCORD_WEBHOOK_URL   "${DISCORD_WEBHOOK_URL}"
+
+      # Build from the repo root so the image can COPY both server/ and client/
+      # (see server/Dockerfile). Retry: Fly's remote builder drops transiently.
+      - name: Deploy to Fly.io
+        if: steps.fly_gate.outputs.ready == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -e
+          for attempt in 1 2 3 4; do
+            echo "::group::flyctl deploy (attempt ${attempt}/4)"
+            if flyctl deploy --remote-only --config server/fly.toml --dockerfile server/Dockerfile .; then
+              echo "::endgroup::"; echo "Deploy succeeded on attempt ${attempt}."; exit 0
+            fi
+            echo "::endgroup::"
+            if [ "${attempt}" -lt 4 ]; then
+              backoff=$((attempt * attempt * 10))
+              echo "::warning::flyctl deploy failed (attempt ${attempt}/4); retrying in ${backoff}s"
+              sleep "${backoff}"
+            fi
+          done
+          echo "::error::flyctl deploy failed after 4 attempts"; exit 1

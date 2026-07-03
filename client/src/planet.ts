@@ -75,7 +75,7 @@ void main(){
   float spec = (1.0-isLand) * pow(max(dot(N,H),0.0), 80.0) * 0.9;
   // day lighting with soft terminator + ambient
   float day = smoothstep(-0.12, 0.22, ndl);
-  vec3 col = albedo * (0.14 + 1.2*max(ndl,0.0)) + spec*vec3(1.0);
+  vec3 col = albedo * (0.22 + 1.2*max(ndl,0.0)) + spec*vec3(1.0);
   // night-side city lights on land
   float night = 1.0 - smoothstep(-0.04, 0.1, ndl);
   float cities = isLand * smoothstep(0.55,0.6, fbm(sp*7.0)) * night;
@@ -97,7 +97,7 @@ void main(){
   float spot = smoothstep(0.16,0.0, length(p - normalize(vec3(0.55,-0.25,0.7))));
   col = mix(col, vec3(0.85,0.42,0.32), spot*0.85);
   vec3 N = normalize(vWN); vec3 sun = normalize(-vWP);
-  col *= (0.13 + 1.15*max(dot(N,sun),0.0));
+  col *= (0.2 + 1.15*max(dot(N,sun),0.0));
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -126,35 +126,54 @@ void main(){
 
 const SPHERE = new THREE.SphereGeometry(1, 56, 40);
 
-// Procedural deep-space skybox: 3D-simplex-noise nebula (seamless, no texture grid).
-const NEBULA_FRAG = NOISE + `
-varying vec3 vLocal;
+// Deep-space skybox: a VOLUMETRIC nebula raymarched through a 3D-simplex density field,
+// then baked ONCE into a cubemap (static, free per-frame). Colors come from a cosine
+// palette + a tilted "galactic" band for that painterly nebula look.
+const NEBULA_RAYMARCH = NOISE + `
+varying vec3 vDir;
+// cosine palette spanning blue → teal → magenta → gold for varied nebula hues
+vec3 pal(float t){
+  return vec3(0.5) + vec3(0.5)*cos(6.28318*(vec3(1.0,0.95,0.85)*t + vec3(0.0,0.22,0.55)));
+}
+float dens(vec3 p){
+  vec3 q = p + 0.7*vec3(fbm(p*0.4+7.0), fbm(p*0.4+13.0), fbm(p*0.4+23.0));   // domain warp
+  return smoothstep(0.45, 1.0, fbm(q*0.85));
+}
 void main(){
-  vec3 d = normalize(vLocal);
-  float n1 = fbm(d*1.8);
-  float n2 = fbm(d*4.0 + 5.0);
-  float n3 = fbm(d*9.0 + 11.0);
-  float density = smoothstep(0.2, 0.95, n1*0.6 + n2*0.3 + n3*0.1);
-  float hue = fbm(d*1.2 + 20.0)*0.5 + 0.5;
-  vec3 c1 = vec3(0.13,0.05,0.23);   // purple
-  vec3 c2 = vec3(0.03,0.09,0.20);   // blue
-  vec3 c3 = vec3(0.20,0.06,0.15);   // magenta
-  vec3 neb = mix(c2, c1, hue);
-  neb = mix(neb, c3, smoothstep(0.6,1.0,hue));
-  vec3 base = vec3(0.012,0.016,0.035);
-  vec3 col = base + neb * density * 1.25;
-  // faint dust brightening in the densest knots
-  col += vec3(0.06,0.05,0.08) * smoothstep(0.8,1.0,density);
+  vec3 rd = normalize(vDir);
+  // galactic band: denser near a tilted plane across the sky
+  float band = 1.0 - smoothstep(0.0, 0.6, abs(dot(rd, normalize(vec3(0.22,1.0,0.32)))));
+  float region = fbm(rd*0.7 + 40.0)*0.5 + 0.5;   // large-scale colored zones
+  vec3 acc = vec3(0.0); float t = 1.0;
+  for (int i = 0; i < 16; i++) {
+    vec3 p = rd * t;
+    float d = dens(p) * (0.4 + 1.0*band);
+    float h = region*0.7 + fbm(p*0.45 + 3.0)*0.3;
+    acc += pal(h) * d;
+    t += 0.85;
+  }
+  acc *= (3.0 / 16.0);
+  acc = pow(acc, vec3(1.18));                       // deepen the voids for contrast
+  vec3 col = vec3(0.008,0.011,0.026) + acc;
+  col += pal(region + 0.35) * pow(max(max(acc.r,acc.g),acc.b), 3.0) * 0.6;   // bright tinted knots
   gl_FragColor = vec4(col, 1.0);
 }`;
 
-export function makeNebula(): THREE.Mesh {
-  const m = new THREE.Mesh(
-    new THREE.SphereGeometry(16000, 32, 24),
-    new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: NEBULA_FRAG, side: THREE.BackSide, depthWrite: false }),
-  );
-  m.renderOrder = -1;
-  return m;
+// Render the raymarch onto a sphere from a CubeCamera once → a static cubemap for the bg.
+export function makeNebula(renderer: THREE.WebGLRenderer): THREE.Texture {
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: NEBULA_RAYMARCH, side: THREE.BackSide, depthWrite: false,
+  });
+  const sphere = new THREE.Mesh(new THREE.SphereGeometry(100, 24, 16), mat);
+  const tmp = new THREE.Scene(); tmp.add(sphere);
+  const rt = new THREE.WebGLCubeRenderTarget(512, { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+  const cam = new THREE.CubeCamera(1, 1000, rt);
+  const prevTone = renderer.toneMapping; renderer.toneMapping = THREE.NoToneMapping;   // bake raw colors
+  cam.update(renderer, tmp);
+  renderer.toneMapping = prevTone;
+  sphere.geometry.dispose(); mat.dispose();
+  return rt.texture;
 }
 
 export interface PlanetOpts { radius: number; color: number; gas: boolean; seed: number; }
@@ -224,7 +243,7 @@ export function makePlanet(o: PlanetOpts): Planet {
 // The central star: a turbulent photosphere (granulation, sunspots, limb darkening),
 // flickering corona shells, and a soft camera-facing bloom halo.
 const SUN_PHOTO_FRAG = NOISE + `
-uniform float uTime; uniform vec3 uViewPos;
+uniform float uTime; uniform vec3 uViewPos; uniform vec3 uTint;
 varying vec3 vLocal; varying vec3 vWN; varying vec3 vWP;
 void main(){
   vec3 p = normalize(vLocal);
@@ -235,6 +254,7 @@ void main(){
   c = mix(c, vec3(1.0,0.95,0.82), smoothstep(0.28,0.62,g));     // bright plages
   float spot = smoothstep(0.5,0.72, fbm(p*4.0 + 19.0));
   c = mix(c, vec3(0.55,0.16,0.04), spot*0.55);                  // sunspots
+  c *= uTint;                                                    // spectral class tint
   vec3 N = normalize(vWN); vec3 V = normalize(uViewPos - vWP);
   float limb = pow(max(dot(N,V),0.0), 0.5);                     // limb darkening
   c *= (0.55 + 0.45*limb);
@@ -253,11 +273,15 @@ void main(){
 
 export interface Star { group: THREE.Group; update(dt: number, camPos: THREE.Vector3): void; }
 
-export function makeStar(radius: number): Star {
+export function makeStar(radius: number, tint = 0xffffff): Star {
+  // tint shifts the whole star toward its spectral class (red dwarf / blue giant);
+  // the surface palette stays "sun-like" underneath so granulation still reads.
+  const tc = new THREE.Color(tint);
+  const soft = new THREE.Color(1, 1, 1).lerp(tc, 0.75);   // don't fully crush the palette
   const g = new THREE.Group();
   const photoMat = new THREE.ShaderMaterial({
     vertexShader: VERT, fragmentShader: SUN_PHOTO_FRAG,
-    uniforms: { uTime: { value: 0 }, uViewPos: { value: new THREE.Vector3() } },
+    uniforms: { uTime: { value: 0 }, uViewPos: { value: new THREE.Vector3() }, uTint: { value: new THREE.Vector3(soft.r, soft.g, soft.b) } },
   });
   g.add(new THREE.Mesh(SPHERE, photoMat)).scale.setScalar(radius);
 
@@ -270,8 +294,8 @@ export function makeStar(radius: number): Star {
     });
     g.add(new THREE.Mesh(SPHERE, m)).scale.setScalar(radius * scale); coronas.push(m);
   };
-  shell(1.3, 2.4, 1.0, 0xffd89a);    // tight chromosphere
-  shell(1.85, 2.8, 0.6, 0xff9a4a);   // outer corona glow
+  shell(1.3, 2.4, 1.0, new THREE.Color(0xffd89a).lerp(tc, 0.6).getHex());    // tight chromosphere
+  shell(1.85, 2.8, 0.6, new THREE.Color(0xff9a4a).lerp(tc, 0.6).getHex());   // outer corona glow
 
   let t = 0;
   return {
