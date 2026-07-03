@@ -82,6 +82,8 @@ canvas { display: block; }
   border-radius: 8px; padding: 8px 14px; font: 600 13px 'Segoe UI', sans-serif; cursor: pointer;
 }
 .nav-btn:hover { background: rgba(30,52,80,0.95); border-color: #5ec8ff; }
+.nav-btn.discord { border-color: #5865f2; color: #c7ccff; }
+.nav-btn.discord:hover { background: rgba(88,101,242,0.25); border-color: #7984ff; }
 
 /* ---- docked HQ badge on fleet tiles ---- */
 .ship-btn { position: relative; }

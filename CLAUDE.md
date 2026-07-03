@@ -171,6 +171,17 @@ How it works / gotchas (all already handled in the code):
 - If a screenshot is black, it's almost always app-side (a thrown error before
   `__ready`, or boot ordering), not the renderer.
 
+## Gateway & deploy (Fly.io + Discord)
+
+`server/` is the Phase-1 gateway (Express, no SDK deps): serves `client/dist`,
+Discord OAuth login (`/auth/discord/*` → signed session cookie → `/api/me`),
+webhook + bot-DM notify helpers, the slash-command `/interactions` endpoint
+(ed25519-verified via Node crypto), and `/healthz`. Every Discord feature is
+inert until its Fly secret is set. Deploys via `.github/workflows/fly-deploy.yml`
+(readiness gate → volume/single-machine enforcement → staged secrets → retried
+deploy), modeled on the high-frontier-fan-game reference. Bootstrap + secrets
+runbook: `docs/DEPLOY.md`. Secrets live ONLY in Fly secrets / Actions secrets.
+
 ## Git / workflow
 
 - Develop on `claude/scifi-mmo-engine-research-e1h48o`; open draft PRs.

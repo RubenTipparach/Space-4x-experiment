@@ -453,6 +453,18 @@ async function main() {
   const galBtn = document.createElement('button'); galBtn.className = 'nav-btn'; galBtn.textContent = 'Galaxy Map';
   navBar.append(hqBtn, galBtn);
 
+  // Discord login (gateway OAuth, see server/index.js). The button shows the
+  // logged-in identity when a session cookie exists; clicking starts the flow.
+  // Fails silent when no gateway is reachable (e.g. static Pages preview).
+  const discordBtn = document.createElement('button'); discordBtn.className = 'nav-btn discord'; discordBtn.textContent = 'Discord';
+  navBar.append(discordBtn);
+  discordBtn.onclick = () => { location.href = '/auth/discord/login'; };
+  fetch('/api/me', { credentials: 'include' }).then((r) => (r.ok ? r.json() : null)).then((u) => {
+    if (!u) return;
+    discordBtn.textContent = `@${u.global_name || u.username}`;
+    discordBtn.title = 'Discord connected — click to re-login';
+  }).catch(() => {});
+
   const FACILITIES = [
     { key: 'admin', name: 'Admin Spire', desc: 'Command hub — raises fleet & build capacity.', base: { ore: 40, crystal: 20 } as Partial<Record<ResourceTag, number>> },
     { key: 'crew', name: 'Crew Quarters', desc: 'Houses crew for your ships.', base: { ore: 30, plants: 15 } },
